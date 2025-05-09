@@ -49,7 +49,8 @@ def main():
     criterion = ASDLoss(reduction=False).to(device)
     
     name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
-    root_path = './datasets'
+    # root_path = './datasets'
+    root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data" # dataset directory in server
     
     avg_AUC = 0.
     avg_pAUC = 0.

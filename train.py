@@ -16,7 +16,9 @@ def main():
     print(cfg)
 
     name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
-    root_path = './datasets'
+    # root_path = './datasets'
+    root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data" # dataset directory in server
+
     
     device_num = cfg['gpu_num']
     device = torch.device(f'cuda:{device_num}')

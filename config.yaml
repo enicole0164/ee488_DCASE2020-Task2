@@ -1,7 +1,7 @@
 alpha: 0.5
 m: 0.7
 
-gpu_num: 0
+gpu_num: 3 # our team's is 3
 epoch: 300
 
 num_classes: 41
