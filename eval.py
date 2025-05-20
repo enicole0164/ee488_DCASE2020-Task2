@@ -1,7 +1,8 @@
+import os
 import torch 
 from torch.utils.data import DataLoader
 from sklearn import metrics
-from model.net import TASTgramMFN
+from model.net import TASTgramMFN, SCLTFSTgramMFN
 from losses import ASDLoss
 from dataloader import test_dataset  
 import pandas as pd
@@ -31,19 +32,33 @@ def evaluator(net, test_loader, criterion, device):
     pauc = metrics.roc_auc_score(y_true, y_pred, max_fpr=0.1)
     return auc, pauc                
         
-def main():
-    with open('config.yaml', encoding='UTF-8') as f:
+def main(net_name, mode):
+    save_dir = f'./check_points/{net_name}/{mode}'
+    save_path = os.path.join(save_dir, 'model.pth')
+
+    with open(os.path.join(save_dir, 'config.yaml'), encoding='UTF-8') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
     
     print(cfg)
+    assert cfg['mode'] == mode, f"cfg mode {cfg['mode']} does not match input mode {mode}"
+    assert cfg['net_name'] == net_name, f"cfg net_name {cfg['net_name']} does not match input net_name {net_name}"
     
     device_num = cfg['gpu_num']
     
     device = torch.device(f'cuda:{device_num}')
 
-    net = TASTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    net_name = cfg['net_name']
+    if net_name == 'TASTgramMFN':
+        net = TASTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'SCLTFSTgramMFN':
+        net = SCLTFSTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    else:
+        raise ValueError(f"Unknown net name: {net_name}")
     
-    net.load_state_dict(torch.load(cfg['save_path']))
+    
+    print(f"Loading model from {save_path}")
+
+    net.load_state_dict(torch.load(save_path))
     net.eval()
     
     criterion = ASDLoss(reduction=False).to(device)
@@ -72,4 +87,4 @@ def main():
     
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    main()
+    main("TASTgramMFN", "noisy_arcmix")
