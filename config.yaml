@@ -14,3 +14,5 @@ lr: 0.0001
 save_path: ./check_points/temporal_attention_noisy_arcmix_stack.pth
 
 mode: noisy_arcmix # select one of ['arcface', 'arcmix', 'noisy_arcmix']
+
+net_name: SCLTFSTgramMFN
