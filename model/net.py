@@ -270,3 +270,151 @@ class SCLTFSTgramMFN(nn.Module):
         # feature = F.normalize(feature, dim=1)                 #no head
         out = self.arcface(feature, label, training=train)
         return out, feature
+    
+
+
+class TFgramNet(nn.Module):
+    """
+    Time-Frequency Gram Network based on OS-SCL paper
+    Extracts joint time-frequency features from mel spectrograms
+    """
+    def __init__(self, mel_bins=128, time_frames=313, num_layers=3):
+        super(TFgramNet, self).__init__()
+        
+        self.mel_bins = mel_bins
+        self.time_frames = time_frames
+        
+        # Multi-scale time-frequency feature extraction
+        self.tf_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(1 if i == 0 else 32, 32, kernel_size=(3, 3), padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 32, kernel_size=(3, 3), padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True)
+            ) for i in range(num_layers)
+        ])
+        
+        # Time-frequency attention mechanisms
+        self.temporal_attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, None)),  # Pool across frequency
+            nn.Conv2d(32, 8, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(8, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        self.spectral_attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d((None, 1)),  # Pool across time
+            nn.Conv2d(32, 8, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(8, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        # Joint time-frequency attention
+        self.joint_attention = nn.Sequential(
+            nn.Conv2d(32, 16, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        # Feature compression to match original dimensions
+        self.feature_compress = nn.Conv2d(32, 1, kernel_size=1)
+        
+        # Ensure output dimensions match input
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((mel_bins, time_frames))
+        
+    def forward(self, x_mel):
+        """
+        Args:
+            x_mel: Mel spectrogram [B, 1, mel_bins, time_frames]
+        Returns:
+            tf_features: Time-frequency features [B, mel_bins, time_frames]
+        """
+        x = x_mel
+        
+        # Multi-layer feature extraction with residual connections
+        for i, layer in enumerate(self.tf_layers):
+            residual = x if i == 0 else x_prev
+            x = layer(x)
+            if i > 0 and x.shape == residual.shape:
+                x = x + residual
+            x_prev = x
+        
+        # Apply multi-scale attention
+        temp_att = self.temporal_attention(x)  # [B, 1, 1, time_frames]
+        spec_att = self.spectral_attention(x)  # [B, 1, mel_bins, 1]
+        joint_att = self.joint_attention(x)    # [B, 1, mel_bins, time_frames]
+        
+        # Combine attention mechanisms
+        x_temp = x * temp_att
+        x_spec = x * spec_att
+        x_joint = x * joint_att
+        
+        # Aggregate all attention-enhanced features
+        x_enhanced = x_temp + x_spec + x_joint
+        
+        # Compress features and ensure correct dimensions
+        x_compressed = self.feature_compress(x_enhanced)
+        x_output = self.adaptive_pool(x_compressed)
+        
+        return x_output.squeeze(1)  # [B, mel_bins, time_frames]
+
+
+class TFSTgramMFN(nn.Module):
+    """
+    TFSTgram-MFN: Time-Frequency-Spectral-Temporal Gram with MobileFaceNet
+    Replaces TASTgramMFN with proper TFgram implementation following OS-SCL paper
+    """
+    
+    def __init__(self, num_classes, mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, m=0.7, s=30, sub=1
+                 ):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(in_features=c_dim, out_features=num_classes,
+                                        m=m, s=s, sub=sub) if use_arcface else use_arcface
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        self.mobilefacenet = MobileFaceNet(num_class=num_classes,
+                                           bottleneck_setting=bottleneck_setting)
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        # NEW: TFgram instead of temporal attention
+        self.tfgram_net = TFgramNet(mel_bins=c_dim, time_frames=313)
+        
+    def get_tgram(self, x_wav):
+        return self.tgramnet(x_wav)
+
+    def forward(self, x_wav, x_mel, label, train=True):
+        # Extract Tgram features from raw audio
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # [B, 1, 128, 313]
+        
+        # Extract TFgram features from mel spectrogram (replaces temporal attention)
+        x_tf = self.tfgram_net(x_mel).unsqueeze(1)  # [B, 1, 128, 313]
+       
+        # Concatenate: Tgram + Sgram + TFgram
+        x = torch.cat((x_t, x_mel, x_tf), dim=1)  # [B, 3, 128, 313]
+        
+        out, feature = self.mobilefacenet(x)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        else:
+            out = self.arcface(feature, label)
+            return out, feature

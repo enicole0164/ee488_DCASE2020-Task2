@@ -1,11 +1,18 @@
 alpha: 0.5
-batch_size: 64
-epoch: 300
-gpu_num: 3
-lr: 0.0001
 m: 0.7
-mode: noisy_arcmix
-net_name: Temporal_Attention
+
+gpu_num: 3 # our team's is 3
+epoch: 300
+
 num_classes: 41
-save_path: ./check_points/temporal_attention_noisy_arcmix_stack.pth
 split_ratio: 0.95
+
+batch_size: 64
+
+lr: 0.0001
+
+save_path: ./check_points/temporal_attention_noisy_arcmix_stack.pth
+
+mode: noisy_arcmix # select one of ['arcface', 'arcmix', 'noisy_arcmix']
+
+net_name: TASTgramMFN

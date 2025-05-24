@@ -11,8 +11,8 @@ batch_size: 64
 
 lr: 0.0001
 
-save_path: ./check_points/temporal_attention_noisy_arcmix_stack.pth
+save_path: ./check_points/TFSTgramMFN_arcface.pth
 
-mode: noisy_arcmix # select one of ['arcface', 'arcmix', 'noisy_arcmix']
+mode: arcface # select one of ['arcface', 'arcmix', 'noisy_arcmix']
 
-net_name: SCLTFSTgramMFN
+net_name: TFSTgramMFN
