@@ -8,6 +8,38 @@ from utils import dataset_split
 from trainer import Trainer
 import yaml
 
+def clear_gpu_memory(device_num):
+    """
+    Aggressively clear GPU memory
+    """
+    import gc
+    
+    print(f'Clearing GPU memory on device {device_num}...')
+    
+    # Clear Python garbage
+    gc.collect()
+    
+    # Clear PyTorch cache
+    torch.cuda.empty_cache()
+    
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device_num)
+        torch.cuda.empty_cache()
+        
+        # Force garbage collection again
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        # Print memory info
+        memory_allocated = torch.cuda.memory_allocated(device_num) / 1024**3
+        memory_reserved = torch.cuda.memory_reserved(device_num) / 1024**3
+        total_memory = torch.cuda.get_device_properties(device_num).total_memory / 1024**3
+        
+        print(f'GPU {device_num} Memory Status:')
+        print(f'  - Total: {total_memory:.2f} GB')
+        print(f'  - Allocated: {memory_allocated:.2f} GB')
+        print(f'  - Reserved: {memory_reserved:.2f} GB')
+        print(f'  - Available: {total_memory - memory_reserved:.2f} GB')
 
 def main():
     with open('config.yaml', encoding='UTF-8') as f:
@@ -32,6 +64,7 @@ def main():
     device_num = cfg['gpu_num']
     device = torch.device(f'cuda:{device_num}')
     
+
     print('training dataset loading...')
     dataset = train_dataset(root_path, name_list)
     

@@ -3,8 +3,8 @@ from model.net import TASTgramMFN, SCLTFSTgramMFN, TFSTgramMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct
-from torch.cuda.amp import autocast
-
+from torch.amp import autocast  # CHANGE 1: Updated import (was torch.cuda.amp)
+from sklearn import metrics  # CHANGE 2: Added missing import
 
 class Trainer:
     def __init__(self, device, net, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
@@ -49,7 +49,7 @@ class Trainer:
                 
                 x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
                 
-                with autocast():
+                with autocast('cuda'):  # CHANGE 3: Added 'cuda' parameter
                     if self.mode == 'arcface':
                         logits, _ = self.net(x_wavs, x_mels, labels)
                         loss = self.criterion(logits, labels)
@@ -92,13 +92,14 @@ class Trainer:
         sum_loss = 0.
         sum_accuracy = 0.
         
-        for (x_wavs, x_mels, labels) in valid_loader:
-            x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
-            logits, _ = self.net(x_wavs, x_mels, labels, train=False)
-            sum_accuracy += get_accuracy(logits, labels)
-            loss = self.criterion(logits, labels)
-            sum_loss += loss.item()
-            
+        with torch.no_grad():  # CHANGE 4: Added explicit no_grad context
+            for (x_wavs, x_mels, labels) in valid_loader:
+                x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
+                logits, _ = self.net(x_wavs, x_mels, labels, train=False)
+                sum_accuracy += get_accuracy(logits, labels)
+                loss = self.criterion(logits, labels)
+                sum_loss += loss.item()
+                
         avg_loss = sum_loss / num_steps 
         avg_accuracy = sum_accuracy / num_steps 
         return avg_loss, avg_accuracy
