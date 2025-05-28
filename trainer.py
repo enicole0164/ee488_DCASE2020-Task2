@@ -2,20 +2,19 @@ import torch
 from model.net import TASTgramMFN, SCLTFSTgramMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
-from losses import ASDLoss, ArcMarginProduct
+from losses import ASDLoss, ArcMarginProduct, SupConLoss
 from torch.cuda.amp import autocast
 
 
 class Trainer:
-    def __init__(self, device, net, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
+    def __init__(self, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
         self.device = device
         self.epochs = epochs
         self.alpha = alpha
 
+        # Set the network
         if net == 'SCLTFSTgramMFN':
             self.net = SCLTFSTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
-            if mode != 'arcface':
-                raise ValueError('SCLTFSTgramMFN only supports arcface mode')
         elif net == 'TASTgramMFN':
             self.net = TASTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
         else:
@@ -28,7 +27,13 @@ class Trainer:
         self.criterion = ASDLoss().to(self.device)
         self.test_criterion = ASDLoss(reduction=False).to(self.device)
         self.mode = mode
-        
+        self.loss_name = loss_name
+        if loss_name not in ['cross_entropy', 'cross_entropy_supcon']:
+            raise ValueError('Loss should be one of [cross_entropy, cross_entropy_supcon]')
+        if loss_name == 'cross_entropy_supcon':
+            self.sc_criternion = SupConLoss().to(self.device)
+        print(f'{loss_name} loss has been selected...')
+
         if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
             raise ValueError('Mode should be one of [arcface, arcmix, noisy_arcmix]')
         
@@ -49,19 +54,26 @@ class Trainer:
                 
                 with autocast():
                     if self.mode == 'arcface':
-                        logits, _ = self.net(x_wavs, x_mels, labels)
-                        loss = self.criterion(logits, labels)
+                        logits, features = self.net(x_wavs, x_mels, labels)
+                        ce_loss = self.criterion(logits, labels)
                     
                     elif self.mode == 'noisy_arcmix':
                         mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
-                        logits, _ = self.net(mixed_x_wavs, mixed_x_mels, labels)
-                        loss = noisy_arcmix_criterion(self.criterion, logits, y_a, y_b, lam)
+                        logits, features = self.net(mixed_x_wavs, mixed_x_mels, labels)
+                        ce_loss = noisy_arcmix_criterion(self.criterion, logits, y_a, y_b, lam)
                     
                     elif self.mode == 'arcmix':
                         mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
-                        logits, logits_shuffled, _ = self.net(mixed_x_wavs, mixed_x_mels, [y_a, y_b])
-                        loss = arcmix_criterion(self.criterion, logits, logits_shuffled, y_a, y_b, lam)
+                        logits, logits_shuffled, features = self.net(mixed_x_wavs, mixed_x_mels, [y_a, y_b])
+                        ce_loss = arcmix_criterion(self.criterion, logits, logits_shuffled, y_a, y_b, lam)
                 
+                if self.loss_name == 'cross_entropy':
+                    loss = ce_loss
+                elif self.loss_name == 'cross_entropy_supcon':
+                    features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
+                    sc_loss = self.sc_criternion(features, labels)
+                    loss = ce_loss + sc_loss
+
                 sum_accuracy += get_accuracy(logits, labels)
                 
                 self.optimizer.zero_grad()
@@ -75,6 +87,7 @@ class Trainer:
             avg_accuracy = sum_accuracy / num_steps
             
             valid_loss, valid_accuracy = self.valid(valid_loader)
+            print(f'EPOCH: {epoch} | Train_loss: {avg_loss:.5f} | Train_accuracy: {avg_accuracy:.5f} | Valid_loss: {valid_loss:.5f} | Valid_accuracy: {valid_accuracy:.5f}')
             
             if min_val_loss > valid_loss:
                 min_val_loss = valid_loss
@@ -92,9 +105,15 @@ class Trainer:
         
         for (x_wavs, x_mels, labels) in valid_loader:
             x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
-            logits, _ = self.net(x_wavs, x_mels, labels, train=False)
+            logits, features = self.net(x_wavs, x_mels, labels, train=False)
             sum_accuracy += get_accuracy(logits, labels)
-            loss = self.criterion(logits, labels)
+
+            if self.loss_name == 'cross_entropy':
+                loss = self.criterion(logits, labels)
+            elif self.loss_name == 'cross_entropy_supcon':
+                features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
+                sc_loss = self.sc_criternion(features, labels)
+                loss = self.criterion(logits, labels) + sc_loss
             sum_loss += loss.item()
             
         avg_loss = sum_loss / num_steps 

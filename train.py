@@ -20,7 +20,7 @@ def main():
     root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data" # dataset directory in server
     
     # Create the directory if it doesn't exist
-    save_dir = f'./check_points/{cfg["net_name"]}/{cfg["mode"]}'
+    save_dir = f'./check_points/{cfg["net_name"]}/{cfg["mode"]}/{cfg["loss_name"]}'
     os.makedirs(save_dir, exist_ok=True)
 
     # Save the config file in the directory
@@ -40,7 +40,7 @@ def main():
     train_dataloader = DataLoader(train_ds, batch_size=cfg['batch_size'], shuffle=True)
     valid_dataloader = DataLoader(valid_ds, batch_size=cfg['batch_size'])
     
-    trainer = Trainer(device=device, net=cfg["net_name"], alpha=cfg['alpha'], mode=cfg['mode'],
+    trainer = Trainer(device=device, net=cfg["net_name"], loss_name=cfg['loss_name'], alpha=cfg['alpha'], mode=cfg['mode'],
                       epochs=cfg['epoch'], class_num=cfg['num_classes'],
                       m=cfg['m'], lr=cfg['lr'])
     

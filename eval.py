@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn import metrics
 from model.net import TASTgramMFN, SCLTFSTgramMFN
-from losses import ASDLoss
+from losses import ASDLoss, SupConLoss
 from dataloader import test_dataset  
 import pandas as pd
 import yaml
@@ -61,8 +61,13 @@ def main(net_name, mode):
     net.load_state_dict(torch.load(save_path))
     net.eval()
     
-    criterion = ASDLoss(reduction=False).to(device)
-    
+    loss_name = cfg['loss']
+    if loss_name == 'cross_entropy':
+        criterion = ASDLoss(reduction=False).to(device)
+    elif loss_name == 'cross_entropy_supcon':
+        ce_loss = ASDLoss(reduction=False).to(device)
+        sc_loss = SupConLoss().to(device)
+        criterion = lambda x, labels: ce_loss(x, labels) + sc_loss(x.unsqueeze(1), labels)
     name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
     # root_path = './datasets'
     root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data" # dataset directory in server
@@ -87,4 +92,4 @@ def main(net_name, mode):
     
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    main("TASTgramMFN", "noisy_arcmix")
+    main("TASTgramMFN", "noisy_arcmix", "cross_entropy_supcon")

@@ -90,14 +90,34 @@ class SupConLoss(nn.Module):
         labels = labels.contiguous().view(-1, 1)
         if labels.shape[0] != batch_size:
             raise ValueError('Num of labels does not match num of features')
+        # # Count class occurrences
+        # unique_labels, counts = torch.unique(labels, return_counts=True)
+        # class_counts = dict(zip(unique_labels.cpu().numpy(), counts.cpu().numpy()))
+        # print("[Info] Class distribution in batch:", class_counts)
+
         mask = torch.eq(labels, labels.T).float().to(features.device)
 
-        contrast_count = features.shape[1]
-        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        # TODO: normalize features in better manner
+        features = F.normalize(features, dim=-1)  # Normalize along feature dim
+        # Check for zero positive pairs
+        positive_counts_per_sample = mask.sum(1) - 1  # Subtract self-pair
+        num_samples_with_no_positives = (positive_counts_per_sample <= 0).sum()
 
+        if num_samples_with_no_positives > 0:
+            print(f"[Warning] {num_samples_with_no_positives.item()} samples have zero positive pairs.")
+
+        # --------------------------------------------
+        # Reshape features and determine anchor set
+        # --------------------------------------------
+        contrast_count = features.shape[1]
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0) # shape: [batch_size * n_views, feature_dim]
+
+        # Only use one view as anchor (first one)
         if self.contrast_mode == 'one':
             anchor_feature = features[:, 0]
             anchor_count = 1
+
+        # Use all views as anchors (common in SupCon)
         elif self.contrast_mode == 'all':
             anchor_feature = contrast_feature
             anchor_count = contrast_count
@@ -107,14 +127,20 @@ class SupConLoss(nn.Module):
         # compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)  #
-        # for numerical stability
+            self.temperature)
+        
+        # --------------------------------------
+        # Numerical stability (avoid overflow)
+        # --------------------------------------
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-
-        # tile mask
+        # --------------------------------------
+        # Mask preparation
+        # --------------------------------------
+        # Expand the positive mask to match the shape of logits
         mask = mask.repeat(anchor_count, contrast_count)
-        # mask-out self-contrast cases
+
+         # Create logits mask to remove self-contrast (i.e., sample compared to itself)
         logits_mask = torch.scatter(
             torch.ones_like(mask),
             1,
@@ -123,15 +149,18 @@ class SupConLoss(nn.Module):
         )
         mask = mask * logits_mask
 
-        # compute log_prob
+        # --------------------------------------
+        # Log-softmax and loss computation
+        # --------------------------------------
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-
+        
+        # Average log-probability over positive pairs
         mask_pos_pairs = mask.sum(1)
         mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)  #
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
-
-        # loss
+        
+        # Final loss computation (temperature-scaled)
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
 
