@@ -4,10 +4,12 @@ from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct
 from torch.cuda.amp import autocast
+import matplotlib.pyplot as plt
+import pandas as pd 
 
 
 class Trainer:
-    def __init__(self, device, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
+    def __init__(self, device, mode, m, alpha, epochs=10, class_num=6, lr=1e-4):
         self.device = device
         self.epochs = epochs
         self.alpha = alpha
@@ -27,8 +29,13 @@ class Trainer:
     def train(self, train_loader, valid_loader, save_path):
         num_steps = len(train_loader)
         min_val_loss = 1e10
+
+        # New: Lists to track history
+        train_losses, train_accuracies = [], []
+        val_losses, val_accuracies = [], []
         
         for epoch in tqdm(range(self.epochs), total=self.epochs):
+            self.net.train()
             sum_loss = 0.
             sum_accuracy = 0.
             
@@ -63,8 +70,16 @@ class Trainer:
                 
             avg_loss = sum_loss / num_steps
             avg_accuracy = sum_accuracy / num_steps
+
+            
+            val_loss, val_acc = self.valid(valid_loader)
             
             valid_loss, valid_accuracy = self.valid(valid_loader)
+            # Save history
+            train_losses.append(avg_loss)
+            train_accuracies.append(avg_accuracy)
+            val_losses.append(val_loss)
+            val_accuracies.append(val_acc)
             
             if min_val_loss > valid_loss:
                 min_val_loss = valid_loss
@@ -72,7 +87,68 @@ class Trainer:
                 print("model has been saved!")
                 print(f'lr: {lr:.7f} | EPOCH: {epoch} | Train_loss: {avg_loss:.5f} | Train_accuracy: {avg_accuracy:.5f} | Valid_loss: {valid_loss:.5f} | Valid_accuracy: {valid_accuracy:.5f}')
                 torch.save(self.net.state_dict(), save_path)
-                
+
+                        # New: Plotting section after training
+        
+        train_accuracies = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_accuracies]
+        val_accuracies   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_accuracies]
+        train_losses = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_losses]
+        val_losses   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_losses]
+
+        # Plotting the loss and accuracy curves
+        print("Plotting loss and accuracy curves...")
+        epochs = range(1, self.epochs + 1)
+        plt.figure(figsize=(12, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.plot(epochs, train_losses, label='Train Loss')
+        plt.plot(epochs, val_losses, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Loss Curve')
+        plt.legend()
+        plt.grid(True)
+
+        plt.subplot(1, 2, 1)
+        plt.plot(epochs, train_losses, label='Train Loss')
+        plt.plot(epochs, val_losses, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Loss Curve')
+        plt.legend()
+        plt.grid(True)
+
+        plt.subplot(1, 2, 2)
+        plt.plot(epochs, train_accuracies, label='Train Accuracy')
+        plt.plot(epochs, val_accuracies, label='Validation Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.title('Accuracy Curve')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.savefig("training_plot_arcmix_epoch_50.png")
+        plt.show(block=True)    
+        print("Training complete. Loss and accuracy curves have been plotted.")
+
+         # make sure this is at the top of your file
+
+        # After plt.show()
+        # Save to CSV
+        metrics_df = pd.DataFrame({
+            'Epoch': list(range(1, self.epochs + 1)),
+            'Train_Loss': train_losses,
+            'Val_Loss': val_losses,
+            'Train_Accuracy': train_accuracies,
+            'Val_Accuracy': val_accuracies
+        })
+
+        csv_path = "training_metrics_arcmix.csv"
+        metrics_df.to_csv(csv_path, index=False)
+        print(f"📁 Training metrics saved to {csv_path}")
+
+         
     def valid(self, valid_loader):
         self.net.eval()
         
