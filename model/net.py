@@ -5,6 +5,10 @@ import math
 from torch import nn
 import torch
 from losses import ArcMarginProduct
+from model.waveq import TFgram
+
+import torch.nn.functional as F
+from model.AF import BasicHead, LeakyReLUHead
 
 
 class Bottleneck(nn.Module):
@@ -209,3 +213,60 @@ class Temporal_Attention(nn.Module):
     
     refined_feats = self.sigmoid(feats).transpose(1,2) * x.transpose(1,2)
     return refined_feats
+
+class SCLTFSTgramMFN(nn.Module):
+
+    def __init__(self, num_classes, mode, cfg,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 margin='arcface', m=0.7, s=30, sub=1, nsc=32,
+                 ):
+        super().__init__()
+
+        self.margin = margin
+        self.cfg = cfg
+        print(m)
+
+        self.arcface = ArcMarginProduct(in_features=c_dim, out_features=num_classes,
+                                        m=m, s=s, sub=sub)
+
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        self.mobilefacenet = MobileFaceNet(num_class=num_classes,
+                                           bottleneck_setting=bottleneck_setting,
+                                           cfg=cfg)
+        self.mode = mode
+
+        self.TFgramNet = TFgram(classes_num=41)
+        head_type = cfg["ht"]
+        if head_type == 'basic':
+            self.head = BasicHead()
+        elif head_type == 'leaky_relu':
+            self.head = LeakyReLUHead(cfg)
+
+        if mode not in ['arcface']:
+            raise ValueError('Choose arcface mode')
+
+    def get_tgram(self, x_wav):
+        return self.tgramnet(x_wav)
+
+    def forward(self, x_wav, x_mel, label, train=True):
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (32,1,128,313)
+
+        x_tf = self.TFgramNet(x_wav, train).unsqueeze(1)
+
+        if self.cfg['fussion'] == 1:
+            # f=1
+            x = torch.cat((x_mel, x_t, x_tf), dim=1)
+
+        elif self.cfg['fussion'] == 2:
+            # f=2
+            x = x_mel
+
+        out, feature = self.mobilefacenet(x)
+
+        feature = F.normalize(self.head(feature), dim=1)
+        # feature = F.normalize(feature, dim=1)                 #no head
+        out = self.arcface(feature, label, training=train)
+        return out, feature
