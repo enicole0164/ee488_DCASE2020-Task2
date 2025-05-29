@@ -3,7 +3,7 @@ from model.net import TASTgramMFN, SCLTFSTgramMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 import matplotlib.pyplot as plt
 import pandas as pd 
 
@@ -59,7 +59,7 @@ class Trainer:
                 
                 x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
                 
-                with autocast():
+                with autocast('cuda'):
                     if self.mode == 'arcface':
                         logits, features = self.net(x_wavs, x_mels, labels)
                         ce_loss = self.criterion(logits, labels)

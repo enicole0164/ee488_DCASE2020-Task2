@@ -10,6 +10,12 @@ from model.waveq import TFgram
 import torch.nn.functional as F
 from model.AF import BasicHead, LeakyReLUHead
 
+from torch.utils.checkpoint import checkpoint
+
+def checkpoint_module(module, *args):
+    def custom_forward(*inputs):
+        return module(*inputs)
+    return checkpoint(custom_forward, *args)
 
 class Bottleneck(nn.Module):
     def __init__(self, inp, oup, stride, expansion):
@@ -167,13 +173,17 @@ class TASTgramMFN(nn.Module):
         return self.tgramnet(x_wav)
 
     def forward(self, x_wav, x_mel, label, train=True):
-        x_t = self.tgramnet(x_wav).unsqueeze(1)
+        # --- Gradient checkpointing ---
+        # x_t = self.tgramnet(x_wav).unsqueeze(1)
+        x_t = checkpoint_module(self.tgramnet, x_wav).unsqueeze(1)  # (B, 1, C, T)
         
-        x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+        # x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+        x_mel_temp_att = checkpoint_module(self.temporal_attention, x_mel).unsqueeze(1) # (B, 1, C, T)
        
         x = torch.cat((x_t, x_mel, x_mel_temp_att), dim=1)
         
-        out, feature = self.mobilefacenet(x)
+        # out, feature = self.mobilefacenet(x)
+        out, feature = checkpoint_module(self.mobilefacenet, x)
         
         if self.mode == 'arcmix':
             if train:
@@ -252,9 +262,19 @@ class SCLTFSTgramMFN(nn.Module):
         return self.tgramnet(x_wav)
 
     def forward(self, x_wav, x_mel, label, train=True):
-        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (32,1,128,313)
+        # --- Gradient checkpointing ---
+        def run_tgram(x):
+            return self.tgramnet(x).unsqueeze(1)
+        def run_tfgram(x):
+            return self.TFgramNet(x, train).unsqueeze(1)
+        def run_mobilefacenet(x):
+            return self.mobilefacenet(x)
+        
+        # x_t = self.tgramnet(x_wav).unsqueeze(1)  # (32,1,128,313)
+        # x_tf = self.TFgramNet(x_wav, train).unsqueeze(1)
 
-        x_tf = self.TFgramNet(x_wav, train).unsqueeze(1)
+        x_t = checkpoint(run_tgram, x_wav)
+        x_tf = checkpoint(run_tfgram, x_wav)
 
         if self.cfg['fussion'] == 1:
             # f=1
@@ -264,7 +284,8 @@ class SCLTFSTgramMFN(nn.Module):
             # f=2
             x = x_mel
 
-        out, feature = self.mobilefacenet(x)
+        # out, feature = self.mobilefacenet(x)
+        out, feature = checkpoint(run_mobilefacenet, x)
 
         feature = F.normalize(self.head(feature), dim=1)
         # feature = F.normalize(feature, dim=1)                 #no head
