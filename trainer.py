@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct
@@ -18,9 +18,13 @@ class Trainer:
             if mode != 'arcface':
                 raise ValueError('SCLTFSTgramMFN only supports arcface mode') 
         elif net == 'TASTgramMFN':
-            self.net = TASTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+            self.net = TASTgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'TASTgramMFN_FPH': 
-            self.net = TASTgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+            self.net = TASTgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN':
+            self.net = TASTWgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN_FPH': 
+            self.net = TASTWgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TASTgramMFN_FPH]')
         print(f'{net} has been selected...')

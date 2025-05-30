@@ -2,7 +2,7 @@ import os
 import torch 
 from torch.utils.data import DataLoader
 from sklearn import metrics
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
 from losses import ASDLoss
 from dataloader import test_dataset  
 import pandas as pd
@@ -53,6 +53,10 @@ def main(net_name, mode):
         net = TASTgramMFN_FPH(cfg=cfg, num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     elif net_name == 'SCLTFSTgramMFN':
         net = SCLTFSTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TASTWgramMFN':
+        net = TASTWgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TASTWgramMFN_FPH':
+        net = TASTWgramMFN_FPH(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     else:
         raise ValueError(f"Unknown net name: {net_name}")
     
@@ -88,4 +92,4 @@ def main(net_name, mode):
     
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    main("TASTgramMFN_FPH", "noisy_arcmix")
+    main("TASTWgramMFN", "noisy_arcmix")

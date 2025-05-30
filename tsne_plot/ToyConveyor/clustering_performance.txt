@@ -1,0 +1,10 @@
+[Clustering Evaluation: Before FPH]
+Silhouette Score: 0.7507
+Davies-Bouldin Index: 0.3599
+Avg. Intra-cluster Distance: 4.1134
+Avg. Inter-cluster Distance: 16.8739
+[Clustering Evaluation: After FPH]
+Silhouette Score: 0.8514
+Davies-Bouldin Index: 0.2172
+Avg. Intra-cluster Distance: 1.6843
+Avg. Inter-cluster Distance: 11.7843
