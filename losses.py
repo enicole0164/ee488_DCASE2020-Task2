@@ -104,7 +104,7 @@ class SupConLoss(nn.Module):
         num_samples_with_no_positives = (positive_counts_per_sample <= 0).sum()
 
         if num_samples_with_no_positives > 0:
-            print(f"[Warning] {num_samples_with_no_positives.item()} samples have zero positive pairs.")
+            print(f"[Warning] {num_samples_with_no_positives.item()} samples have zero positive pairs.\n")
 
         # --------------------------------------------
         # Reshape features and determine anchor set
