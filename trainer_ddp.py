@@ -11,10 +11,11 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 class Trainer:
-    def __init__(self, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
+    def __init__(self, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4, rank=0):
         self.device = device
         self.epochs = epochs
         self.alpha = alpha
+        self.rank = rank
 
         # Set the network
         if net == 'SCLTFSTgramMFN':
@@ -44,7 +45,7 @@ class Trainer:
         print(f'{mode} mode has been selected...')
 
         if torch.cuda.device_count() > 1:
-            self.net = DDP(self.net, device_ids=[self.device.index])
+            self.net = DDP(self.net, device_ids=[self.device.index], find_unused_parameters=True)
         
     def train(self, train_loader, valid_loader, save_path):
         num_steps = len(train_loader)
@@ -82,8 +83,18 @@ class Trainer:
                 if self.loss_name == 'cross_entropy':
                     loss = ce_loss
                 elif self.loss_name == 'cross_entropy_supcon':
-                    features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
-                    sc_loss = self.sc_criternion(features, labels)
+                    ftrs = features.unsqueeze(1).contiguous() # shape: [batch_size, 1, feature_dim]
+                    lbls = labels.contiguous()
+                    lgts = logits.contiguous()
+
+                    if dist.is_initialized():
+                        # Gather features and labels across all processes
+                        gathered_features = self.net.module.all_gather(ftrs)
+                        gathered_labels = self.net.module.all_gather(lbls)
+                        ftrs = torch.cat(gathered_features, dim=0)
+                        lbls = torch.cat(gathered_labels, dim=0)
+
+                    sc_loss = self.sc_criternion(ftrs, lbls)
                     loss = ce_loss + sc_loss
 
                 sum_accuracy += get_accuracy(logits, labels)
@@ -117,64 +128,64 @@ class Trainer:
                 torch.save(self.net.state_dict(), save_path)
 
                         # New: Plotting section after training
-        
-        train_accuracies = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_accuracies]
-        val_accuracies   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_accuracies]
-        train_losses = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_losses]
-        val_losses   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_losses]
+        if self.rank == 0:  # Only the main process should plot and save metrics
+            train_accuracies = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_accuracies]
+            val_accuracies   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_accuracies]
+            train_losses = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in train_losses]
+            val_losses   = [x.cpu().item() if torch.is_tensor(x) else float(x) for x in val_losses]
 
-        # Plotting the loss and accuracy curves
-        print("Plotting loss and accuracy curves...")
-        epochs = range(1, self.epochs + 1)
-        plt.figure(figsize=(12, 5))
+            # Plotting the loss and accuracy curves
+            print("Plotting loss and accuracy curves...")
+            epochs = range(1, self.epochs + 1)
+            plt.figure(figsize=(12, 5))
 
-        plt.subplot(1, 2, 1)
-        plt.plot(epochs, train_losses, label='Train Loss')
-        plt.plot(epochs, val_losses, label='Validation Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Loss Curve')
-        plt.legend()
-        plt.grid(True)
+            plt.subplot(1, 2, 1)
+            plt.plot(epochs, train_losses, label='Train Loss')
+            plt.plot(epochs, val_losses, label='Validation Loss')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.title('Loss Curve')
+            plt.legend()
+            plt.grid(True)
 
-        plt.subplot(1, 2, 1)
-        plt.plot(epochs, train_losses, label='Train Loss')
-        plt.plot(epochs, val_losses, label='Validation Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Loss Curve')
-        plt.legend()
-        plt.grid(True)
+            plt.subplot(1, 2, 1)
+            plt.plot(epochs, train_losses, label='Train Loss')
+            plt.plot(epochs, val_losses, label='Validation Loss')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.title('Loss Curve')
+            plt.legend()
+            plt.grid(True)
 
-        plt.subplot(1, 2, 2)
-        plt.plot(epochs, train_accuracies, label='Train Accuracy')
-        plt.plot(epochs, val_accuracies, label='Validation Accuracy')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
-        plt.title('Accuracy Curve')
-        plt.legend()
-        plt.grid(True)
+            plt.subplot(1, 2, 2)
+            plt.plot(epochs, train_accuracies, label='Train Accuracy')
+            plt.plot(epochs, val_accuracies, label='Validation Accuracy')
+            plt.xlabel('Epoch')
+            plt.ylabel('Accuracy')
+            plt.title('Accuracy Curve')
+            plt.legend()
+            plt.grid(True)
 
-        plt.tight_layout()
-        plt.savefig("training_plot_arcmix_epoch_50.png")
-        plt.show(block=True)    
-        print("Training complete. Loss and accuracy curves have been plotted.")
+            plt.tight_layout()
+            plt.savefig("training_plot_arcmix_epoch_50.png")
+            plt.show(block=True)    
+            print("Training complete. Loss and accuracy curves have been plotted.")
 
-         # make sure this is at the top of your file
+            # make sure this is at the top of your file
 
-        # After plt.show()
-        # Save to CSV
-        metrics_df = pd.DataFrame({
-            'Epoch': list(range(1, self.epochs + 1)),
-            'Train_Loss': train_losses,
-            'Val_Loss': val_losses,
-            'Train_Accuracy': train_accuracies,
-            'Val_Accuracy': val_accuracies
-        })
+            # After plt.show()
+            # Save to CSV
+            metrics_df = pd.DataFrame({
+                'Epoch': list(range(1, self.epochs + 1)),
+                'Train_Loss': train_losses,
+                'Val_Loss': val_losses,
+                'Train_Accuracy': train_accuracies,
+                'Val_Accuracy': val_accuracies
+            })
 
-        csv_path = "training_metrics_arcmix.csv"
-        metrics_df.to_csv(csv_path, index=False)
-        print(f"📁 Training metrics saved to {csv_path}")
+            csv_path = "training_metrics_arcmix.csv"
+            metrics_df.to_csv(csv_path, index=False)
+            print(f"📁 Training metrics saved to {csv_path}")
 
          
     def valid(self, valid_loader):
@@ -192,9 +203,22 @@ class Trainer:
             if self.loss_name == 'cross_entropy':
                 loss = self.criterion(logits, labels)
             elif self.loss_name == 'cross_entropy_supcon':
-                features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
-                sc_loss = self.sc_criternion(features, labels)
-                loss = self.criterion(logits, labels) + sc_loss
+                ftrs = features.unsqueeze(1).contiguous()  # shape: [batch_size, 1, feature_dim]
+                lbls = labels.contiguous()
+                lgts = logits.contiguous()
+
+                if dist.is_initialized():
+                    # Gather features and labels across all processes
+                    gathered_features = self.net.module.all_gather(ftrs)
+                    gathered_labels = self.net.module.all_gather(lbls)
+                    gathered_logits = self.net.module.all_gather(lgts)
+                    ftrs = torch.cat(gathered_features, dim=0)
+                    lbls = torch.cat(gathered_labels, dim=0)
+                    lgts = torch.cat(gathered_logits, dim=0)
+                
+                sc_loss = self.sc_criternion(ftrs, lbls)
+
+                loss = self.criterion(lgts, lbls) + sc_loss
             sum_loss += loss.item()
             
         avg_loss = sum_loss / num_steps 

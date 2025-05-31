@@ -11,6 +11,6 @@ batch_size: 64
 
 lr: 0.0001
 
-save_path: ./check_points/temporal_attention_noisy_arcmix_stack.pth
-
 mode: noisy_arcmix # select one of ['arcface', 'arcmix', 'noisy_arcmix']
+net_name: TASTgramMFN # select one of ['TASTgramMFN', 'SCLTFSTgramMFN']
+loss_name: cross_entropy_supcon # select one of ['cross_entropy', 'cross_entropy_supcon']

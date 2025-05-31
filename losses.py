@@ -97,14 +97,12 @@ class SupConLoss(nn.Module):
 
         mask = torch.eq(labels, labels.T).float().to(features.device)
 
-        # TODO: normalize features in better manner
-        features = F.normalize(features, dim=-1)  # Normalize along feature dim
         # Check for zero positive pairs
         positive_counts_per_sample = mask.sum(1) - 1  # Subtract self-pair
         num_samples_with_no_positives = (positive_counts_per_sample <= 0).sum()
 
-        if num_samples_with_no_positives > 0:
-            print(f"[Warning] {num_samples_with_no_positives.item()} samples have zero positive pairs.\n")
+        # if num_samples_with_no_positives > 0:
+        #     print(f"[Warning] {num_samples_with_no_positives.item()} samples have zero positive pairs.")
 
         # --------------------------------------------
         # Reshape features and determine anchor set

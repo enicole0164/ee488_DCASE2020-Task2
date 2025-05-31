@@ -113,3 +113,8 @@ If you use this method or this code in your paper, then please cite it:
   organization={IEEE}
 }
 ```
+
+# Setup for DDP on Only cuda:6 and cuda:7
+```
+CUDA_VISIBLE_DEVICES=6,7 torchrun --standalone --nnodes=1 --nproc_per_node=2 train_ddp.py
+```

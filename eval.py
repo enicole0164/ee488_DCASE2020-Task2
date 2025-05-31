@@ -22,7 +22,6 @@ def evaluator(net, test_loader, criterion, device):
             x_wavs, x_mels, labels, AN_N_labels = x_wavs.to(device), x_mels.to(device), labels.to(device), AN_N_labels.to(device)
             
             logits, _ = net(x_wavs, x_mels, labels, train=False)
-            
             score = criterion(logits, labels)
 
             y_pred.extend(score.tolist())
@@ -32,8 +31,8 @@ def evaluator(net, test_loader, criterion, device):
     pauc = metrics.roc_auc_score(y_true, y_pred, max_fpr=0.1)
     return auc, pauc                
         
-def main(net_name, mode):
-    save_dir = f'./check_points/{net_name}/{mode}'
+def main(net_name, mode, loss_name):
+    save_dir = f'./check_points/{net_name}/{mode}/{loss_name}'
     save_path = os.path.join(save_dir, 'model.pth')
 
     with open(os.path.join(save_dir, 'config.yaml'), encoding='UTF-8') as f:
@@ -57,17 +56,11 @@ def main(net_name, mode):
     
     
     print(f"Loading model from {save_path}")
-
     net.load_state_dict(torch.load(save_path))
     net.eval()
     
-    loss_name = cfg['loss']
-    if loss_name == 'cross_entropy':
-        criterion = ASDLoss(reduction=False).to(device)
-    elif loss_name == 'cross_entropy_supcon':
-        ce_loss = ASDLoss(reduction=False).to(device)
-        sc_loss = SupConLoss().to(device)
-        criterion = lambda x, labels: ce_loss(x, labels) + sc_loss(x.unsqueeze(1), labels)
+    loss_name = cfg['loss_name']
+    criterion = ASDLoss(reduction=False).to(device)
     name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
     # root_path = './datasets'
     root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data" # dataset directory in server

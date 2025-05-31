@@ -1,83 +1,104 @@
+# train_ddp.py
+
 import os
 import random
 import yaml
-import torch
 import numpy as np
+import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
-from dataloader import train_dataset, test_dataset
+from dataloader import train_dataset
 from utils import dataset_split
-from trainer import Trainer
+from trainer_ddp2 import Trainer
+
 
 def setup(rank, world_size):
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    print(f"[Rank {rank}] Initializing process group...")
+    # Use environment variables set by torchrun for rendezvous
+    dist.init_process_group(backend='nccl', init_method='env://')
     torch.cuda.set_device(rank)
+    print(f"[Rank {rank}] Process group initialized (world size: {world_size}).")
+
 
 def cleanup():
     dist.destroy_process_group()
 
-def train_ddp(rank, world_size, cfg):
+
+def main_worker(rank, world_size, cfg):
+    print(f"[Rank {rank}] Starting training...")
     setup(rank, world_size)
+    random_seed(cfg['seed'])
 
-    # Set the GPU device
-    device = torch.device(f"cuda:{rank}")
-
-    name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
-    root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data"
-
-    # Save config and checkpoint path only on rank 0
-    if rank == 0:
-        save_dir = f'./check_points/{cfg["net_name"]}/{cfg["mode"]}/{cfg["loss_name"]}'
-        os.makedirs(save_dir, exist_ok=True)
-        with open(os.path.join(save_dir, 'config.yaml'), 'w', encoding='UTF-8') as f_out:
-            yaml.dump(cfg, f_out)
-        save_path = os.path.join(save_dir, 'model.pth')
-    else:
-        save_path = None  # only rank 0 saves the model
-
-    # Load dataset
-    dataset = train_dataset(root_path, name_list)
+    # 1) Load and split dataset
+    root = cfg['root_path']
+    print(f"[Rank {rank}] Loading dataset from {root}...")
+    dataset = train_dataset(root, cfg['name_list'])
     train_ds, valid_ds = dataset_split(dataset, split_ratio=cfg['split_ratio'])
 
-    # Distributed samplers
+    # 2) Create distributed samplers
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
     valid_sampler = DistributedSampler(valid_ds, num_replicas=world_size, rank=rank, shuffle=False)
 
-    train_loader = DataLoader(train_ds, batch_size=cfg['batch_size'], sampler=train_sampler)
-    valid_loader = DataLoader(valid_ds, batch_size=cfg['batch_size'], sampler=valid_sampler)
+    print(f"[Rank {rank}] Train size: {len(train_ds)}, Valid size: {len(valid_ds)}")
+    train_loader = DataLoader(train_ds,
+                              batch_size=cfg['batch_size'],
+                              sampler=train_sampler,
+                              num_workers=4, pin_memory=True)
+    valid_loader = DataLoader(valid_ds,
+                              batch_size=cfg['batch_size'],
+                              sampler=valid_sampler,
+                              num_workers=4, pin_memory=True)
 
-    trainer = Trainer(device=device, net=cfg["net_name"], loss_name=cfg['loss_name'],
-                      alpha=cfg['alpha'], mode=cfg['mode'], epochs=cfg['epoch'],
-                      class_num=cfg['num_classes'], m=cfg['m'], lr=cfg['lr'],
-                      rank=rank, world_size=world_size)  # add rank info if needed in trainer
+    # 3) Build model and wrap in DDP
+    device = torch.device(f'cuda:{rank}')
+    trainer = Trainer(device=device,
+                      net=cfg['net_name'],
+                      loss_name=cfg['loss_name'],
+                      alpha=cfg['alpha'],
+                      mode=cfg['mode'],
+                      epochs=cfg['epoch'],
+                      class_num=cfg['num_classes'],
+                      m=cfg['m'],
+                      lr=cfg['lr'],
+                      rank=rank)
 
+    # 4) Training loop
+    save_dir = os.path.join(cfg['save_root'], cfg['net_name'], cfg['mode'], cfg['loss_name'])
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f'model_rank{rank}.pth')
     trainer.train(train_loader, valid_loader, save_path)
 
     cleanup()
+
 
 def random_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    # Deterministic CUDNN
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def main():
-    random_seed(2023)
-    torch.set_num_threads(4)
 
+def main():
+    # Load config
     with open('config.yaml', encoding='UTF-8') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
 
-    print('Configuration...')
-    print(cfg)
+    # Add necessary fields
+    cfg['seed'] = 2023
+    cfg['root_path'] = "/home/Dataset/DCASE2020_Task2_dataset/dev_data"
+    cfg['name_list'] = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
+    cfg['save_root'] = './check_points'
 
-    world_size = torch.cuda.device_count()
-    mp.spawn(train_ddp, args=(world_size, cfg), nprocs=world_size, join=True)
+    # Read rank and world_size from torchrun environment
+    rank = int(os.environ['LOCAL_RANK'])
+    world_size = int(os.environ['WORLD_SIZE'])
+
+    main_worker(rank, world_size, cfg)
 
 if __name__ == '__main__':
     main()
