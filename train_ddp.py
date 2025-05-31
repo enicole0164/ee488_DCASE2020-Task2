@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from dataloader import train_dataset
 from utils import dataset_split
-from trainer_ddp2 import Trainer
+from trainer_ddp import Trainer
 
 
 def setup(rank, world_size):

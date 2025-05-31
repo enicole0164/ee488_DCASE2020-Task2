@@ -178,6 +178,8 @@ class TASTgramMFN(nn.Module):
         x = torch.cat((x_t, x_mel, x_mel_temp_att), dim=1)
         
         out, feature = self.mobilefacenet(x)
+
+        feature = F.normalize(feature, dim=1)  # Normalize the feature vector
         
         if self.mode == 'arcmix':
             if train:
