@@ -12,10 +12,7 @@ from model.AF import BasicHead, LeakyReLUHead
 
 from torch.utils.checkpoint import checkpoint
 
-def checkpoint_module(module, *args):
-    def custom_forward(*inputs):
-        return module(*inputs)
-    return checkpoint(custom_forward, *args)
+import torch.distributed as dist
 
 class Bottleneck(nn.Module):
     def __init__(self, inp, oup, stride, expansion):
@@ -174,16 +171,13 @@ class TASTgramMFN(nn.Module):
 
     def forward(self, x_wav, x_mel, label, train=True):
         # --- Gradient checkpointing ---
-        # x_t = self.tgramnet(x_wav).unsqueeze(1)
-        x_t = checkpoint_module(self.tgramnet, x_wav).unsqueeze(1)  # (B, 1, C, T)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)
         
-        # x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
-        x_mel_temp_att = checkpoint_module(self.temporal_attention, x_mel).unsqueeze(1) # (B, 1, C, T)
+        x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
        
         x = torch.cat((x_t, x_mel, x_mel_temp_att), dim=1)
         
-        # out, feature = self.mobilefacenet(x)
-        out, feature = checkpoint_module(self.mobilefacenet, x)
+        out, feature = self.mobilefacenet(x)
         
         if self.mode == 'arcmix':
             if train:
@@ -197,7 +191,14 @@ class TASTgramMFN(nn.Module):
         else:
             out = self.arcface(feature, label)
             return out, feature
-        
+
+    def all_gather(self, tensor):
+        """Gather tensors from all processes. Use this before computing contrastive loss."""
+        if not dist.is_initialized():
+            return [tensor]
+        gathered = [torch.zeros_like(tensor) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered, tensor)
+        return gathered
         
 class Temporal_Attention(nn.Module):
   def __init__(self, feature_dim=128):
