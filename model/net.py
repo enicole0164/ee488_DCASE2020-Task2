@@ -355,9 +355,12 @@ class TASTWgramMFN(nn.Module):
         return self.tgramnet(x_wav)
 
     def forward(self, x_wav, x_mel, label, train=True):
+        print(f"x_wav shape: {x_wav.shape}")
         x_t = self.tgramnet(x_wav).unsqueeze(1)
-        x_w = self.wavenet(x_wav).unsqueeze(1)
+        #x_w = self.wavenet(x_wav).unsqueeze(1) 
+        x_w = self.wavenet(x_wav)[0].unsqueeze(1)
         x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+        
 
         #Feature concatenation
         x = torch.cat((x_t, x_mel, x_mel_temp_att, x_w), dim=1)

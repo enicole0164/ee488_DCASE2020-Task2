@@ -2,12 +2,12 @@ alpha: 0.5
 m: 0.7
 
 gpu_num: 3 # our team's is 3
-epoch: 30
+epoch: 300
 
 num_classes: 41
 split_ratio: 0.95
 
-batch_size: 64
+batch_size: 32
 
 lr: 0.0001
 

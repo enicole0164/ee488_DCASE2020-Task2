@@ -178,6 +178,7 @@ class WaveNet(nn.Module):
         self.kernel_size = kernel_size
 
         self.n_filter = self.n_channel * self.n_mul
+        self.input_proj = nn.Conv1d(1, self.n_channel, kernel_size=1) #added line
         self.group_norm1 = nn.GroupNorm(1, self.n_channel)
         self.conv1 = nn.Conv1d(self.n_channel, self.n_filter, 1)
 
@@ -193,6 +194,7 @@ class WaveNet(nn.Module):
         self.conv3 = nn.Conv1d(self.n_channel, self.n_channel, 1)
 
     def forward(self, x):
+        x = self.input_proj(x) #added line
         x = self.group_norm1(x)
         x = self.conv1(x)
         skip1, x = self.block1(x)
