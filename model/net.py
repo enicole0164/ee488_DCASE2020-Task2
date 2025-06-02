@@ -5,7 +5,7 @@ import math
 from torch import nn
 import torch
 from losses import ArcMarginProduct
-from model.waveq import TFgram
+from model.waveq import TFgram, WaveNet
 
 import torch.nn.functional as F
 from model.AF import BasicHead, LeakyReLUHead
@@ -17,7 +17,7 @@ import torch.distributed as dist
 class Bottleneck(nn.Module):
     def __init__(self, inp, oup, stride, expansion):
         super(Bottleneck, self).__init__()
-        self.connect = stride == 1 and inp == oup
+        self.connect = stride == 1 and inp == oup 
         #
         self.conv = nn.Sequential(
             # pw
@@ -125,7 +125,7 @@ class MobileFaceNet(nn.Module):
         return out, feature
 
 
-class TgramNet(nn.Module):
+class TgramNet(nn.Module): #STFT처럼 conv 기반으로 waveform을 mel-filter 적용한 결과로 반환
     def __init__(self, num_layer=3, mel_bins=128, win_len=1024, hop_len=512):
         super(TgramNet, self).__init__()
         # if "center=True" of stft, padding = win_len / 2
@@ -227,6 +227,7 @@ class Temporal_Attention(nn.Module):
     refined_feats = self.sigmoid(feats).transpose(1,2) * x.transpose(1,2)
     return refined_feats
 
+#TFgram, Tgram, Log-mel을 모두 결합한 모델로, BasicHead 또는 LeakyReLUHead로 FPH구조의 선택 가능
 class SCLTFSTgramMFN(nn.Module):
 
     def __init__(self, num_classes, mode, cfg,
@@ -294,3 +295,166 @@ class SCLTFSTgramMFN(nn.Module):
         # feature = F.normalize(feature, dim=1)                 #no head
         out = self.arcface(feature, label, training=train)
         return out, feature
+
+#concat(TAgram + Sgram + Tgram) -> FPH
+#Baseline: TASTgram
+class TASTgramMFN_FPH(nn.Module):
+    def __init__(self, num_classes, mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, m=0.7, s=30, sub=1,
+                 head_type='leaky_relu', cfg=None
+                 ):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(in_features=c_dim, out_features=num_classes,
+                                        m=m, s=s, sub=sub) if use_arcface else use_arcface
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        self.mobilefacenet = MobileFaceNet(num_class=num_classes,
+                                           bottleneck_setting=bottleneck_setting)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+     
+        if head_type == 'basic':
+            self.head = BasicHead()
+        elif head_type == 'leaky_relu':
+            self.head = LeakyReLUHead(cfg)
+
+    def get_tgram(self, x_wav):
+        return self.tgramnet(x_wav)
+
+    def forward(self, x_wav, x_mel, label, train=True):
+        x_t = self.tgramnet(x_wav).unsqueeze(1)
+        x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+       
+        x = torch.cat((x_t, x_mel, x_mel_temp_att), dim=1)
+        
+        out, feature = self.mobilefacenet(x)
+        feature = F.normalize(self.head(feature), dim=1) #Apply FPH and L2 norm
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+    
+#concat(TAgram + Sgram + Tgram + Wavenet)
+#Baseline: TASTgram
+class TASTWgramMFN(nn.Module):
+    def __init__(self, num_classes, mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, m=0.7, s=30, sub=1
+                 ):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(in_features=c_dim, out_features=num_classes,
+                                        m=m, s=s, sub=sub) if use_arcface else use_arcface
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        self.wavenet = WaveNet(n_channel=c_dim, n_mul=4, kernel_size=3) #Added feature
+        self.mobilefacenet = MobileFaceNet(num_class=num_classes,
+                                           bottleneck_setting=bottleneck_setting)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+    def get_tgram(self, x_wav):
+        return self.tgramnet(x_wav)
+
+    def forward(self, x_wav, x_mel, label, train=True):
+        x_t = self.tgramnet(x_wav).unsqueeze(1)
+        x_w = self.wavenet(x_wav).unsqueeze(1)
+        x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+
+        #Feature concatenation
+        x = torch.cat((x_t, x_mel, x_mel_temp_att, x_w), dim=1)
+        
+        out, feature = self.mobilefacenet(x)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+
+
+#concat(TAgram + Sgram + Tgram + Wavenet) -> FPH
+class TASTWgramMFN_FPH(nn.Module):
+    def __init__(self, num_classes, mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, m=0.7, s=30, sub=1,
+                 head_type='leaky_relu', cfg=None
+                 ):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(in_features=c_dim, out_features=num_classes,
+                                        m=m, s=s, sub=sub) if use_arcface else use_arcface
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        self.wavenet = WaveNet(n_channel=c_dim, n_mul=4, kernel_size=3) #Added feature
+        self.mobilefacenet = MobileFaceNet(num_class=num_classes,
+                                           bottleneck_setting=bottleneck_setting)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        if head_type == 'basic':
+            self.head = BasicHead()
+        elif head_type == 'leaky_relu':
+            self.head = LeakyReLUHead(cfg)
+
+    def get_tgram(self, x_wav):
+        return self.tgramnet(x_wav)
+
+    def forward(self, x_wav, x_mel, label, train=True):
+        x_t = self.tgramnet(x_wav).unsqueeze(1)
+        x_w = self.wavenet(x_wav).unsqueeze(1)
+        x_mel_temp_att = self.temporal_attention(x_mel).unsqueeze(1)
+
+        #Feature concatenation
+        x = torch.cat((x_t, x_mel, x_mel_temp_att, x_w), dim=1)
+        
+        out, feature = self.mobilefacenet(x)
+        feature = F.normalize(self.head(feature), dim=1)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+

@@ -2,8 +2,8 @@ import os
 import torch 
 from torch.utils.data import DataLoader
 from sklearn import metrics
-from model.net import TASTgramMFN, SCLTFSTgramMFN
 from losses import ASDLoss, SupConLoss
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
 from dataloader import test_dataset  
 import pandas as pd
 import yaml
@@ -46,11 +46,16 @@ def main(net_name, mode, loss_name):
     
     device = torch.device(f'cuda:{device_num}')
 
-    net_name = cfg['net_name']
     if net_name == 'TASTgramMFN':
         net = TASTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TASTgramMFN_FPH':
+        net = TASTgramMFN_FPH(cfg=cfg, num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     elif net_name == 'SCLTFSTgramMFN':
         net = SCLTFSTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TASTWgramMFN':
+        net = TASTWgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TASTWgramMFN_FPH':
+        net = TASTWgramMFN_FPH(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     else:
         raise ValueError(f"Unknown net name: {net_name}")
     
@@ -85,4 +90,4 @@ def main(net_name, mode, loss_name):
     
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    main("TASTgramMFN", "noisy_arcmix", "cross_entropy_supcon")
+    main("TASTgramMFN_FPH", "noisy_arcmix", "cross_entropy_supcon")

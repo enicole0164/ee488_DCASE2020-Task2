@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, SCLTFSTgramMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -9,18 +9,26 @@ import pandas as pd
 
 
 class Trainer:
-    def __init__(self, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4):
+    def __init__(self, cfg, device, net, loss_name, mode, m, alpha, epochs, class_num=41, lr=1e-4):
+        self.cfg = cfg
         self.device = device
         self.epochs = epochs
         self.alpha = alpha
 
-        # Set the network
-        if net == 'SCLTFSTgramMFN':
+        if net == 'SCLTFSTgramMFN': 
             self.net = SCLTFSTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+            if mode != 'arcface':
+                raise ValueError('SCLTFSTgramMFN only supports arcface mode') 
         elif net == 'TASTgramMFN':
-            self.net = TASTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+            self.net = TASTgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTgramMFN_FPH': 
+            self.net = TASTgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN':
+            self.net = TASTWgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN_FPH': 
+            self.net = TASTWgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
-            raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN]')
+            raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TASTgramMFN_FPH]')
         print(f'{net} has been selected...')
         
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=lr)
