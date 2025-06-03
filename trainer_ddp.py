@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, SCLTFSTgramMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -11,7 +11,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 class Trainer:
-    def __init__(self, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4, rank=0):
+    def __init__(self, cfg, device, net, loss_name, mode, m, alpha, epochs=300, class_num=41, lr=1e-4, rank=0):
         self.device = device
         self.epochs = epochs
         self.alpha = alpha
@@ -21,7 +21,13 @@ class Trainer:
         if net == 'SCLTFSTgramMFN':
             self.net = SCLTFSTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
         elif net == 'TASTgramMFN':
-            self.net = TASTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+            self.net = TASTgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTgramMFN_FPH': 
+            self.net = TASTgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN':
+            self.net = TASTWgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgramMFN_FPH': 
+            self.net = TASTWgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN]')
         print(f'{net} has been selected...')
@@ -36,7 +42,7 @@ class Trainer:
         if loss_name not in ['cross_entropy', 'cross_entropy_supcon']:
             raise ValueError('Loss should be one of [cross_entropy, cross_entropy_supcon]')
         if loss_name == 'cross_entropy_supcon':
-            self.sc_criternion = SupConLoss().to(self.device)
+            self.sc_criternion = SupConLoss(temperature=cfg['temp_coeff']).to(self.device)
         print(f'{loss_name} loss has been selected...')
 
         if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:

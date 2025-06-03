@@ -53,7 +53,8 @@ def main_worker(rank, world_size, cfg):
 
     # 3) Build model and wrap in DDP
     device = torch.device(f'cuda:{rank}')
-    trainer = Trainer(device=device,
+    trainer = Trainer(cfg=cfg,
+                      device=device,
                       net=cfg['net_name'],
                       loss_name=cfg['loss_name'],
                       alpha=cfg['alpha'],
@@ -67,6 +68,11 @@ def main_worker(rank, world_size, cfg):
     # 4) Training loop
     save_dir = os.path.join(cfg['save_root'], cfg['net_name'], cfg['mode'], cfg['loss_name'])
     os.makedirs(save_dir, exist_ok=True)
+
+    # Save the config file in the directory
+    with open(os.path.join(save_dir, 'config.yaml'), 'w', encoding='UTF-8') as f_out:
+        yaml.dump(cfg, f_out)
+    
     save_path = os.path.join(save_dir, f'model_rank{rank}.pth')
     trainer.train(train_loader, valid_loader, save_path)
 

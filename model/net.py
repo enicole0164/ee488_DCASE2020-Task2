@@ -351,6 +351,14 @@ class TASTgramMFN_FPH(nn.Module):
             out = self.arcface(feature, label)
             return out, feature
     
+    def all_gather(self, tensor):
+        """Gather tensors from all processes. Use this before computing contrastive loss."""
+        if not dist.is_initialized():
+            return [tensor]
+        gathered = [torch.zeros_like(tensor) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered, tensor)
+        return gathered
+    
 #concat(TAgram + Sgram + Tgram + Wavenet)
 #Baseline: TASTgram
 class TASTWgramMFN(nn.Module):
