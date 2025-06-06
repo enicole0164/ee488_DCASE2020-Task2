@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -27,6 +27,8 @@ class Trainer:
             self.net = TASTWgramMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'TASTWgramMFN_FPH': 
             self.net = TASTWgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN':
+            self.net = TAST_SpecNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TASTgramMFN_FPH]')
         print(f'{net} has been selected...')

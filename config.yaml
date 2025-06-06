@@ -1,7 +1,7 @@
 alpha: 0.5
 m: 0.7
 
-gpu_num: 3 # our team's is 3
+gpu_num: 6 # our team's is 3
 epoch: 300
 
 num_classes: 41
@@ -14,7 +14,7 @@ lr: 0.0001
 temp_coeff: 0.02
 
 mode: noisy_arcmix # select one of ['arcface', 'arcmix', 'noisy_arcmix']
-net_name: TASTgramMFN_FPH # select one of ['TASTgramMFN', 'SCLTFSTgramMFN']
-loss_name: cross_entropy_supcon # select one of ['cross_entropy', 'cross_entropy_supcon']
+net_name: TAST_SpecNetMFN # select one of ['TASTgramMFN', 'SCLTFSTgramMFN']
+loss_name: cross_entropy # select one of ['cross_entropy', 'cross_entropy_supcon']
 
 htn: 64
