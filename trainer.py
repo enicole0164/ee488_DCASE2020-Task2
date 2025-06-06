@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, SCLTFSTgramMFN
+from model.net import TASTgramMFN, SCLTFSTgramMFN, SpecNetMFN, TAST_SpecNetMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct
@@ -18,8 +18,13 @@ class Trainer:
                 raise ValueError('SCLTFSTgramMFN only supports arcface mode')
         elif net == 'TASTgramMFN':
             self.net = TASTgramMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+        elif net == 'SpecNetMFN':  
+            self.net = SpecNetMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN':
+            self.net = TAST_SpecNetMFN(num_classes=class_num, mode=mode, use_arcface=True, m=m).to(self.device)
+
         else:
-            raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN]')
+            raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TAST_SpecNetMFN]')
         print(f'{net} has been selected...')
         
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=lr)

@@ -2,7 +2,7 @@ import os
 import torch 
 from torch.utils.data import DataLoader
 from sklearn import metrics
-from model.net import TASTgramMFN, SCLTFSTgramMFN
+from model.net import TASTgramMFN, SCLTFSTgramMFN, SpecNetMFN, TAST_SpecNetMFN
 from losses import ASDLoss
 from dataloader import test_dataset  
 import pandas as pd
@@ -52,6 +52,10 @@ def main(net_name, mode):
         net = TASTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     elif net_name == 'SCLTFSTgramMFN':
         net = SCLTFSTgramMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'SpecNetMFN':
+        net = SpecNetMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TAST_SpecNetMFN':
+        net = TAST_SpecNetMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     else:
         raise ValueError(f"Unknown net name: {net_name}")
     
@@ -69,7 +73,7 @@ def main(net_name, mode):
     
     avg_AUC = 0.
     avg_pAUC = 0.
-    
+    results = []
     for i in range(len(name_list)):
         test_ds = test_dataset(root_path, name_list[i], name_list)
         test_dataloader = DataLoader(test_ds, batch_size=1)
@@ -78,13 +82,26 @@ def main(net_name, mode):
         avg_AUC += AUC 
         avg_pAUC += PAUC 
         print(f"{name_list[i]} - AUC: {AUC:.5f}, pAUC: {PAUC:.5f}")
-    
+        # 결과 리스트에 저장
+        results.append({
+            'Machine Type': name_list[i],
+            'AUC': round(AUC, 5),
+            'pAUC': round(PAUC, 5)
+        })    
     avg_AUC = avg_AUC / len(name_list)
     avg_pAUC = avg_pAUC / len(name_list)
     
     print(f"Average AUC: {avg_AUC:.5f},  Average pAUC: {avg_pAUC:.5f}")
-        
+    results.append({
+    'Machine Type': 'Average',
+    'AUC': round(avg_AUC, 5),
+    'pAUC': round(avg_pAUC, 5)
+    }) 
     
+    df = pd.DataFrame(results)
+    excel_path = os.path.join(save_dir, 'evaluation_results.xlsx')
+    df.to_excel(excel_path, index=False)
+    print(f"Saved results to {excel_path}")
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    main("TASTgramMFN", "noisy_arcmix")
+    main("TAST_SpecNetMFN", "noisy_arcmix")
