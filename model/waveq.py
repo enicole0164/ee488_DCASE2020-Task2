@@ -221,3 +221,129 @@ class WaveNet(nn.Module):
         for _ in range(3):
             receptive_field = receptive_field * 2 + self.kernel_size - 2
         return receptive_field
+
+class WaveNet_jaeryeong(nn.Module):
+    def __init__(self, n_channel, n_mul, kernel_size):
+        super(WaveNet_jaeryeong, self).__init__()
+        self.wavegram = nn.Conv1d(1, 128, kernel_size=1024, stride=512, padding=1024 // 2, bias=False)
+        self.causal_conv = CausalConv1d(128, 512, kernel_size=2, dilation=1)
+        
+        self.n_channel = n_channel
+        self.n_mul = n_mul
+        self.kernel_size = kernel_size
+
+        self.n_filter = self.n_channel * self.n_mul
+        self.group_norm1 = nn.GroupNorm(1, self.n_channel)
+        self.conv1 = nn.Conv1d(self.n_channel, self.n_filter, 1)
+
+        self.block1_1 = ResidualBlock(512, self.n_mul, self.kernel_size, 1)
+        self.block1_2 = ResidualBlock(512, self.n_mul, self.kernel_size, 1)
+        self.block1_3 = ResidualBlock(512, self.n_mul, self.kernel_size, 1)
+        self.block2_1 = ResidualBlock(512, self.n_mul, self.kernel_size, 2)
+        self.block2_2 = ResidualBlock(512, self.n_mul, self.kernel_size, 2)
+        self.block2_3 = ResidualBlock(512, self.n_mul, self.kernel_size, 2)
+        self.block3_1 = ResidualBlock(512, self.n_mul, self.kernel_size, 4)
+        self.block3_2 = ResidualBlock(512, self.n_mul, self.kernel_size, 4)
+        self.block3_3 = ResidualBlock(512, self.n_mul, self.kernel_size, 4)
+        self.block4_1 = ResidualBlock(512, self.n_mul, self.kernel_size, 8)
+        self.block4_2 = ResidualBlock(512, self.n_mul, self.kernel_size, 8)
+        self.block4_3 = ResidualBlock(512, self.n_mul, self.kernel_size, 8)
+
+        self.relu1 = nn.ReLU()
+        self.group_norm2 = nn.GroupNorm(1, self.n_channel * 4)
+        self.conv2 = nn.Conv1d(self.n_channel * 4, self.n_channel * 4, 1)
+        self.relu2 = nn.ReLU()
+        self.group_norm3 = nn.GroupNorm(1, self.n_channel * 4)
+        self.conv3 = nn.Conv1d(self.n_channel * 4, self.n_channel, 1)
+
+    def forward(self, x):
+        x = self.wavegram(x)
+        x = self.group_norm1(x)
+        x = self.causal_conv(x)
+
+        skip1_1, x = self.block1_1(x)
+        skip1_2, x = self.block1_2(x)
+        skip1_3, x = self.block1_3(x)
+        skip2_1, x = self.block2_1(x)
+        skip2_2, x = self.block2_2(x)
+        skip2_3, x = self.block2_3(x)
+        skip3_1, x = self.block3_1(x)
+        skip3_2, x = self.block3_2(x)
+        skip3_3, x = self.block3_3(x)
+        skip4_1, x = self.block4_1(x)
+        skip4_2, x = self.block4_2(x)
+        skip4_3, x = self.block4_3(x)
+
+        skip = skip1_1 + skip1_2 + skip1_3 \
+                + skip2_1 + skip2_2 + skip2_3 \
+                + skip3_1 + skip3_2 + skip3_3 \
+                + skip4_1 + skip4_2 + skip4_3
+        
+        x = self.relu1(skip)
+        x = self.group_norm2(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.group_norm3(x)
+        x = self.conv3(x)
+
+        return x
+
+    def get_receptive_field(self):
+        receptive_field = 1
+        for _ in range(3):
+            receptive_field = receptive_field * 2 + self.kernel_size - 2
+        return receptive_field
+
+
+class WaveNet_team2(nn.Module):
+    def __init__(self, n_channel, n_mul, kernel_size):
+        super(WaveNet_team2, self).__init__()
+        self.wavegram = nn.Conv1d(1, 128, kernel_size=1024, stride=512, padding=1024 // 2, bias=False)
+        self.causal_conv = CausalConv1d(128, 512, kernel_size=2, dilation=1)
+        
+        self.n_channel = n_channel
+        self.n_mul = n_mul
+        self.kernel_size = kernel_size
+
+        self.n_filter = self.n_channel * self.n_mul
+        self.group_norm1 = nn.GroupNorm(1, self.n_channel)
+        self.conv1 = nn.Conv1d(self.n_channel, self.n_filter, 1)
+
+        self.block1 = ResidualBlock(512, self.n_mul, self.kernel_size, 1)
+        self.block2 = ResidualBlock(512, self.n_mul, self.kernel_size, 2)
+        self.block3 = ResidualBlock(512, self.n_mul, self.kernel_size, 4)
+        self.block4 = ResidualBlock(512, self.n_mul, self.kernel_size, 8)
+
+        self.relu1 = nn.ReLU()
+        self.group_norm2 = nn.GroupNorm(1, self.n_channel * 4)
+        self.conv2 = nn.Conv1d(self.n_channel * 4, self.n_channel * 4, 1)
+        self.relu2 = nn.ReLU()
+        self.group_norm3 = nn.GroupNorm(1, self.n_channel * 4)
+        self.conv3 = nn.Conv1d(self.n_channel * 4, self.n_channel, 1)
+
+    def forward(self, x):
+        x = self.wavegram(x)
+        x = self.group_norm1(x)
+        x = self.causal_conv(x)
+
+        skip1, x = self.block1(x)
+        skip2, x = self.block2(x)
+        skip3, x = self.block3(x)
+        skip4, x = self.block4(x)
+
+        skip = skip1 + skip2 + skip3 + skip4
+        
+        x = self.relu1(skip)
+        x = self.group_norm2(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.group_norm3(x)
+        x = self.conv3(x)
+
+        return x
+
+    def get_receptive_field(self):
+        receptive_field = 1
+        for _ in range(3):
+            receptive_field = receptive_field * 2 + self.kernel_size - 2
+        return receptive_field

@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn import metrics
 from losses import ASDLoss, SupConLoss
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN, TAST_SpecNetMFN_archi2, TAST_SpecNetMFN_combined
 from dataloader import test_dataset  
 import pandas as pd
 import yaml
@@ -11,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-def evaluator(net, test_loader, criterion, device):
+def evaluator(net_name, net, test_loader, criterion, device):
     net.eval()
     
     y_true = []
@@ -21,8 +21,17 @@ def evaluator(net, test_loader, criterion, device):
         for x_wavs, x_mels, labels, AN_N_labels in test_loader:
             x_wavs, x_mels, labels, AN_N_labels = x_wavs.to(device), x_mels.to(device), labels.to(device), AN_N_labels.to(device)
             
-            logits, _ = net(x_wavs, x_mels, labels, train=False)
-            score = criterion(logits, labels)
+            if net_name == 'TAST_SpecNetMFN_combined':
+                type_labels = labels // 7
+                type_labels[labels == 34] = 5 
+                id_logits, _, _ = net(x_wavs, x_mels, labels, type_labels, train=False)
+                logits = id_logits
+                # logits = net.getcosine(x_wavs, x_mels)
+                score = criterion(logits, labels)
+
+            else:
+                logits, _ = net(x_wavs, x_mels, labels, train=False)
+                score = criterion(logits, labels)
 
             y_pred.extend(score.tolist())
             y_true.extend(AN_N_labels.tolist())
@@ -58,6 +67,10 @@ def main(net_name, mode, loss_name):
         net = TASTWgramMFN_FPH(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     elif net_name == 'TAST_SpecNetMFN':
         net = TAST_SpecNetMFN(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TAST_SpecNetMFN_archi2':
+        net = TAST_SpecNetMFN_archi2(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
+    elif net_name == 'TAST_SpecNetMFN_combined':
+        net = TAST_SpecNetMFN_combined(num_classes=cfg['num_classes'], m=cfg['m'], mode=cfg['mode']).to(device)
     else:
         raise ValueError(f"Unknown net name: {net_name}")
     
@@ -79,7 +92,7 @@ def main(net_name, mode, loss_name):
         test_ds = test_dataset(root_path, name_list[i], name_list)
         test_dataloader = DataLoader(test_ds, batch_size=1)
         
-        AUC, PAUC = evaluator(net, test_dataloader, criterion, device)
+        AUC, PAUC = evaluator(net_name, net, test_dataloader, criterion, device)
         avg_AUC += AUC 
         avg_pAUC += PAUC 
         print(f"{name_list[i]} - AUC: {AUC:.5f}, pAUC: {PAUC:.5f}")

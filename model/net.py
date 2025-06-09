@@ -5,7 +5,7 @@ import math
 from torch import nn
 import torch
 from losses import ArcMarginProduct
-from model.waveq import TFgram, WaveNet
+from model.waveq import TFgram, WaveNet, WaveNet_jaeryeong, WaveNet_team2
 
 import torch.nn.functional as F
 from model.AF import BasicHead, LeakyReLUHead
@@ -74,10 +74,11 @@ Mobilefacenet_bottleneck_setting = [
 class MobileFaceNet(nn.Module):
     def __init__(self,
                  num_class,
+                 inp = 3,
                  bottleneck_setting=Mobilefacenet_bottleneck_setting):
         super(MobileFaceNet, self).__init__()
 
-        self.conv1 = ConvBlock(3, 64, 3, 2, 1)
+        self.conv1 = ConvBlock(inp, 64, 3, 2, 1) # When channel changes
 
         self.dw_conv1 = ConvBlock(64, 64, 3, 1, 1, dw=True)
 
@@ -554,7 +555,7 @@ class SpecNet_archi2(nn.Module):
                  strides=[4, 4, 4],       # Smaller strides than ASDNet
                  use_log_scale=True,
                  eps=1e-7):
-        super(SpecNet, self).__init__()
+        super(SpecNet_archi2, self).__init__()
         
         self.signal_length = signal_length
         self.use_log_scale = use_log_scale
@@ -575,7 +576,9 @@ class SpecNet_archi2(nn.Module):
             # Layer 3: Conv1D + ReLU
             nn.Conv1d(64, 128, kernel_sizes[2], strides[2], 
                      padding=2, bias=True),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
+
+            nn.AdaptiveAvgPool1d(313)         # Adaptive pooling to match mel spectrogram time dimension
         )
         
     def forward(self, x_wav):
@@ -615,6 +618,88 @@ class SpecNet_archi2(nn.Module):
         
         return x  # (batch_size, channels, freq_features)
 
+class WaveNetMFN(nn.Module):
+    """
+    Pretrained WaveNet model for anomalous sound detection.
+    This model uses a WaveNet architecture to extract temporal features
+    """
+    def __init__(self, 
+                 num_classes,
+                 mode,
+                 c_dim=128,
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, 
+                 m=0.7, 
+                 s=30, 
+                 sub=1):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(
+            in_features=c_dim, 
+            out_features=num_classes,
+            m=m, s=s, sub=sub
+        ) if use_arcface else use_arcface
+        
+        self.wavenet = WaveNet_team2(n_channel=c_dim, n_mul=1, kernel_size=3)  # Number of output channels)
+
+        # MobileFaceNet backbone - now processes 4 feature channels instead of 3
+        self.mobilefacenet = MobileFaceNet(
+            num_class=num_classes,
+            bottleneck_setting=bottleneck_setting
+        )
+        
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        # Update conv1 in MobileFaceNet to accept 4 channels instead of 3
+        self.mobilefacenet.conv1 = ConvBlock(1, 64, 3, 2, 1)
+        
+    def forward(self, x_wav, x_mel, label, train=True):
+        # 1. WaveNet for additional temporal features
+        x_w = self.wavenet(x_wav).unsqueeze(1)
+        x = x_w
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+        
+    def getcosine(self, x_wav, x_mel):
+        """
+        Extract cosine similarity between Tgram and mel spectrogram features.
+        This is useful for analyzing the relationship between temporal and spectral features.
+        """
+        # 1. WaveNet for additional temporal features
+        x_w = self.wavenet(x_wav).unsqueeze(1)
+        x = x_w
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        
+        cosine = F.linear(F.normalize(feature), F.normalize(self.arcface.weight))
+        return cosine
+
+    def all_gather(self, tensor):
+        """Gather tensors from all processes. Use this before computing contrastive loss."""
+        if not dist.is_initialized():
+            return [tensor]
+        gathered = [torch.zeros_like(tensor) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered, tensor)
+        return gathered
+    
+                 
 
 class SpecNetMFN(nn.Module):
     """
@@ -627,7 +712,7 @@ class SpecNetMFN(nn.Module):
                  c_dim=128,
                  signal_length=160000,
                  spec_kernel_sizes=[9, 7, 5],
-                 spec_strides=[8, 4, 8],
+                 spec_strides=[4, 4, 4],
                  bottleneck_setting=Mobilefacenet_bottleneck_setting,
                  use_arcface=True, 
                  m=0.7, 
@@ -642,7 +727,7 @@ class SpecNetMFN(nn.Module):
         ) if use_arcface else use_arcface
         
         # SpecNet for spectral features (replacing temporal features)
-        self.specnet = SpecNet(
+        self.specnet = SpecNet_archi2(
             signal_length=signal_length,
             channels=c_dim,
             kernel_sizes=spec_kernel_sizes,
@@ -701,7 +786,6 @@ class SpecNetMFN(nn.Module):
             out = self.arcface(feature, label)
             return out, feature
         
-
 class TAST_SpecNetMFN(nn.Module):
     """
     Combines TASTgram (Temporal Attention + Tgram) with SpecNet features.
@@ -781,6 +865,7 @@ class TAST_SpecNetMFN(nn.Module):
         
         # Pass through MobileFaceNet
         out, feature = self.mobilefacenet(x)
+        feature = F.normalize(feature, dim=1)
         
         if self.mode == 'arcmix':
             if train:
@@ -793,3 +878,329 @@ class TAST_SpecNetMFN(nn.Module):
         else:
             out = self.arcface(feature, label)
             return out, feature
+        
+    def getcosine(self, x_wav, x_mel):
+        """
+        Extract cosine similarity between Tgram and mel spectrogram features.
+        This is useful for analyzing the relationship between temporal and spectral features.
+        """
+        # 1. Extract temporal features using TgramNet (from TASTgram)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 2. Extract spectral features using SpecNet
+        x_spec = self.specnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 3. Apply temporal attention to mel spectrogram (from TASTgram)
+        x_mel_att = self.temporal_attention(x_mel).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 4. Concatenate all features: [tgram, mel, mel_attention, specnet]
+        # This gives us 4 feature channels combining TASTgram and SpecNet
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)  # (batch, 4, 128, 313)
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        
+        cosine = F.linear(F.normalize(feature), F.normalize(self.arcface.weight))
+        return cosine
+
+    def all_gather(self, tensor):
+        """Gather tensors from all processes. Use this before computing contrastive loss."""
+        if not dist.is_initialized():
+            return [tensor]
+        gathered = [torch.zeros_like(tensor) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered, tensor)
+        return gathered
+     
+class TAST_SpecNetMFN_archi2(nn.Module):
+    """
+    Combines TASTgram (Temporal Attention + Tgram) with SpecNet features.
+    This model uses:
+    - Tgram for temporal features
+    - SpecNet for spectral features
+    - Temporal attention on mel spectrogram
+    - Log-mel spectrogram
+    All features are concatenated and processed through MobileFaceNet.
+    """
+    def __init__(self, 
+                 num_classes,
+                 mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 signal_length=160000,
+                 spec_kernel_sizes=[9, 7, 5],
+                 spec_strides=[4, 4, 4],
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, 
+                 m=0.7, 
+                 s=30, 
+                 sub=1):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(
+            in_features=c_dim, 
+            out_features=num_classes,
+            m=m, s=s, sub=sub
+        ) if use_arcface else use_arcface
+        
+        # TgramNet for temporal features (from TASTgram)
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        
+        # SpecNet for spectral features
+        self.specnet = SpecNet_archi2(
+            signal_length=signal_length,
+            channels=c_dim,
+            kernel_sizes=spec_kernel_sizes,
+            strides=spec_strides
+        )
+        
+        # MobileFaceNet backbone - now processes 4 feature channels instead of 3
+        self.mobilefacenet = MobileFaceNet(
+            num_class=num_classes,
+            bottleneck_setting=bottleneck_setting
+        )
+        
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        # Temporal attention for mel spectrogram (from TASTgram)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        
+        # # Adaptive pooling to match mel spectrogram time dimension (313)
+        # self.adaptive_pool = nn.AdaptiveAvgPool1d(313)
+        
+        # Update conv1 in MobileFaceNet to accept 4 channels instead of 3
+        self.mobilefacenet.conv1 = ConvBlock(4, 64, 3, 2, 1)
+        
+    def forward(self, x_wav, x_mel, label, train=True):
+        # 1. Extract temporal features using TgramNet (from TASTgram)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 2. Extract spectral features using SpecNet
+        x_spec = self.specnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 3. Apply temporal attention to mel spectrogram (from TASTgram)
+        x_mel_att = self.temporal_attention(x_mel).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 4. Concatenate all features: [tgram, mel, mel_attention, specnet]
+        # This gives us 4 feature channels combining TASTgram and SpecNet
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)  # (batch, 4, 128, 313)
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+
+class TASTWgram_SpecNetMFN(nn.Module):
+    """
+    Combines TASTgram (Temporal Attention + Tgram) with SpecNet features.
+    This model uses:
+    - Tgram for temporal features
+    - SpecNet for spectral features
+    - Temporal attention on mel spectrogram
+    - Log-mel spectrogram
+    All features are concatenated and processed through MobileFaceNet.
+    """
+    def __init__(self, 
+                 num_classes,
+                 mode,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 signal_length=160000,
+                 spec_kernel_sizes=[9, 7, 5],
+                 spec_strides=[8, 4, 8],
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, 
+                 m=0.7, 
+                 s=30, 
+                 sub=1):
+        super().__init__()
+        
+        self.arcface = ArcMarginProduct(
+            in_features=c_dim, 
+            out_features=num_classes,
+            m=m, s=s, sub=sub
+        ) if use_arcface else use_arcface
+        
+        # TgramNet for temporal features (from TASTgram)
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        
+        # SpecNet for spectral features
+        self.specnet = SpecNet(
+            signal_length=signal_length,
+            channels=c_dim,
+            kernel_sizes=spec_kernel_sizes,
+            strides=spec_strides
+        )
+
+        self.wavenet = WaveNet_jaeryeong(n_channel=c_dim, n_mul=1, kernel_size=3) #Added feature
+        
+        # MobileFaceNet backbone - now processes 4 feature channels instead of 3
+        self.mobilefacenet = MobileFaceNet(
+            num_class=num_classes,
+            bottleneck_setting=bottleneck_setting
+        )
+        
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        # Temporal attention for mel spectrogram (from TASTgram)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        
+        # Update conv1 in MobileFaceNet to accept 4 channels instead of 3
+        self.mobilefacenet.conv1 = ConvBlock(4, 64, 3, 2, 1)
+        
+    def forward(self, x_wav, x_mel, label, train=True):
+        # 1. Extract temporal features using TgramNet (from TASTgram)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 2. Extract spectral features using SpecNet
+        x_spec = self.specnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 3. WaveNet for additional temporal features
+        x_w = self.wavenet(x_wav).unsqueeze(1)
+        
+        # 4. Concatenate all features: [tgram, mel, mel_attention, specnet]
+        # This gives us 4 feature channels combining TASTgram and SpecNet
+        x = torch.cat((x_t, x_mel, x_w, x_spec), dim=1)  # (batch, 4, 128, 313)
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        
+        if self.mode == 'arcmix':
+            if train:
+                out = self.arcface(feature, label[0])
+                out_shuffled = self.arcface(feature, label[1])
+                return out, out_shuffled, feature
+            else:
+                out = self.arcface(feature, label)
+                return out, feature
+        else:
+            out = self.arcface(feature, label)
+            return out, feature
+
+class TAST_SpecNetMFN_combined(nn.Module):
+    """
+    Combines TASTgram (Temporal Attention + Tgram) with SpecNet features.
+    This model uses:
+    - Tgram for temporal features
+    - SpecNet for spectral features
+    - Temporal attention on mel spectrogram
+    - Log-mel spectrogram
+    All features are concatenated and processed through MobileFaceNet.
+    """
+    def __init__(self, 
+                 num_classes,
+                 mode,
+                 num_types=6,
+                 c_dim=128,
+                 win_len=1024,
+                 hop_len=512,
+                 signal_length=160000,
+                 spec_kernel_sizes=[9, 7, 5],
+                 spec_strides=[8, 4, 8],
+                 bottleneck_setting=Mobilefacenet_bottleneck_setting,
+                 use_arcface=True, 
+                 m=0.7, 
+                 s=30, 
+                 sub=1):
+        super().__init__()
+        
+        self.id_arcface = ArcMarginProduct(
+            in_features=c_dim, 
+            out_features=num_classes,
+            m=m, s=s, sub=sub
+        ) if use_arcface else use_arcface
+
+        self.type_arcface = ArcMarginProduct(
+            in_features=c_dim, 
+            out_features=num_types,
+            m=m, s=s, sub=sub
+        ) if use_arcface else use_arcface
+        
+        # TgramNet for temporal features (from TASTgram)
+        self.tgramnet = TgramNet(mel_bins=c_dim, win_len=win_len, hop_len=hop_len)
+        
+        # SpecNet for spectral features
+        self.specnet = SpecNet(
+            signal_length=signal_length,
+            channels=c_dim,
+            kernel_sizes=spec_kernel_sizes,
+            strides=spec_strides
+        )
+        
+        # MobileFaceNet backbone - now processes 4 feature channels instead of 3
+        self.mobilefacenet = MobileFaceNet(
+            num_class=num_classes,
+            bottleneck_setting=bottleneck_setting
+        )
+        
+        self.mode = mode
+        
+        if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
+            raise ValueError('Choose one of [arcface, arcmix, noisy_arcmix]')
+        
+        # Temporal attention for mel spectrogram (from TASTgram)
+        self.temporal_attention = Temporal_Attention(feature_dim=c_dim)
+        
+        # Update conv1 in MobileFaceNet to accept 4 channels instead of 3
+        self.mobilefacenet.conv1 = ConvBlock(4, 64, 3, 2, 1)
+        
+    def forward(self, x_wav, x_mel, id_label, type_label, train=True):
+        # 1. Extract temporal features using TgramNet (from TASTgram)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 2. Extract spectral features using SpecNet
+        x_spec = self.specnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 3. Apply temporal attention to mel spectrogram (from TASTgram)
+        x_mel_att = self.temporal_attention(x_mel).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 4. Concatenate all features: [tgram, mel, mel_attention, specnet]
+        # This gives us 4 feature channels combining TASTgram and SpecNet
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)  # (batch, 4, 128, 313)
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        feature = F.normalize(feature, dim=1)
+        
+        id_out = self.id_arcface(feature, id_label)
+        type_out = self.type_arcface(feature, type_label)
+
+        return id_out, type_out, feature
+
+    def getcosine(self, x_wav, x_mel):
+        # 1. Extract temporal features using TgramNet (from TASTgram)
+        x_t = self.tgramnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 2. Extract spectral features using SpecNet
+        x_spec = self.specnet(x_wav).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 3. Apply temporal attention to mel spectrogram (from TASTgram)
+        x_mel_att = self.temporal_attention(x_mel).unsqueeze(1)  # (batch, 1, 128, 313)
+        
+        # 4. Concatenate all features: [tgram, mel, mel_attention, specnet]
+        # This gives us 4 feature channels combining TASTgram and SpecNet
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)  # (batch, 4, 128, 313)
+        
+        # Pass through MobileFaceNet
+        out, feature = self.mobilefacenet(x)
+        feature = F.normalize(feature, dim=1)
+        
+        cosine = F.linear(F.normalize(feature, dim=1), F.normalize(self.id_arcface.weight, dim=1))
+        return cosine

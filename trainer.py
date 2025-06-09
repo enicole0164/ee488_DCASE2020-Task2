@@ -1,5 +1,6 @@
 import torch
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN, TAST_SpecNetMFN_archi2, TASTWgram_SpecNetMFN, \
+                        TAST_SpecNetMFN_combined, WaveNetMFN
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -29,6 +30,14 @@ class Trainer:
             self.net = TASTWgramMFN_FPH(cfg=cfg, num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'TAST_SpecNetMFN':
             self.net = TAST_SpecNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN_archi2':
+            self.net = TAST_SpecNetMFN_archi2(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTWgram_SpecNetMFN':
+            self.net = TASTWgram_SpecNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN_combined':
+            self.net = TAST_SpecNetMFN_combined(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'WaveNetMFN':
+            self.net = WaveNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TASTgramMFN_FPH]')
         print(f'{net} has been selected...')
@@ -40,10 +49,12 @@ class Trainer:
         self.test_criterion = ASDLoss(reduction=False).to(self.device)
         self.mode = mode
         self.loss_name = loss_name
-        if loss_name not in ['cross_entropy', 'cross_entropy_supcon']:
+        if loss_name not in ['cross_entropy', 'cross_entropy_supcon', 'cross_entropy_combined']:
             raise ValueError('Loss should be one of [cross_entropy, cross_entropy_supcon]')
-        if loss_name == 'cross_entropy_supcon':
+        elif loss_name == 'cross_entropy_supcon':
             self.sc_criternion = SupConLoss().to(self.device)
+        elif loss_name == 'cross_entropy_combined':
+            self.beta = 0.1
         print(f'{loss_name} loss has been selected...')
 
         if mode not in ['arcface', 'arcmix', 'noisy_arcmix']:
@@ -70,19 +81,45 @@ class Trainer:
                 x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
                 
                 with autocast('cuda'):
-                    if self.mode == 'arcface':
-                        logits, features = self.net(x_wavs, x_mels, labels)
-                        ce_loss = self.criterion(logits, labels)
-                    
-                    elif self.mode == 'noisy_arcmix':
-                        mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
-                        logits, features = self.net(mixed_x_wavs, mixed_x_mels, labels)
-                        ce_loss = noisy_arcmix_criterion(self.criterion, logits, y_a, y_b, lam)
-                    
-                    elif self.mode == 'arcmix':
-                        mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
-                        logits, logits_shuffled, features = self.net(mixed_x_wavs, mixed_x_mels, [y_a, y_b])
-                        ce_loss = arcmix_criterion(self.criterion, logits, logits_shuffled, y_a, y_b, lam)
+                    if self.loss_name == 'cross_entropy_combined':
+                        if self.mode == 'noisy_arcmix':
+                            mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
+                            y_a_type = y_a // 7  # Assuming 7 types per machine
+                            y_a_type[y_a == 34] = 5 
+                            y_b_type = y_b // 7
+                            y_b_type[y_b == 34] = 5
+
+                            id_logits, type_logits, features = self.net(mixed_x_wavs, mixed_x_mels, labels, y_a_type)
+                            # y_a, y_b should be processed so that they are processed to distinuguish type from labels
+                            # {fan has label 0,1,2,3,4,5,6}
+                            # {pump has label 7,8,9,10,11,12,13}
+                            # {slider has label 14,15,16,17,18,19,20}
+                            # {ToyCar has label 21,22,23,24,25,26,27}
+                            # {ToyConveyor has label 28,29,30,31,32,33}
+                            # {valve has label 34,35,36,37,38,39,40}
+                            
+                           
+                            id_loss = noisy_arcmix_criterion(self.criterion, id_logits, y_a, y_b, lam)
+                            type_loss = noisy_arcmix_criterion(self.criterion, type_logits, y_a_type, y_b_type, lam)
+
+                            ce_loss = (1 - self.beta) * id_loss + self.beta * type_loss
+                            logits = id_logits
+                        else:
+                            ValueError('cross_entropy_combined loss only supports noisy_arcmix mode')
+                    else:
+                        if self.mode == 'arcface':
+                            logits, features = self.net(x_wavs, x_mels, labels)
+                            ce_loss = self.criterion(logits, labels)
+                        
+                        elif self.mode == 'noisy_arcmix':
+                            mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
+                            logits, features = self.net(mixed_x_wavs, mixed_x_mels, labels)
+                            ce_loss = noisy_arcmix_criterion(self.criterion, logits, y_a, y_b, lam)
+                        
+                        elif self.mode == 'arcmix':
+                            mixed_x_wavs, mixed_x_mels, y_a, y_b, lam = mixup_data(x_wavs, x_mels, labels, self.device, alpha=self.alpha)
+                            logits, logits_shuffled, features = self.net(mixed_x_wavs, mixed_x_mels, [y_a, y_b])
+                            ce_loss = arcmix_criterion(self.criterion, logits, logits_shuffled, y_a, y_b, lam)
                 
                 if self.loss_name == 'cross_entropy':
                     loss = ce_loss
@@ -90,6 +127,8 @@ class Trainer:
                     features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
                     sc_loss = self.sc_criternion(features, labels)
                     loss = ce_loss + sc_loss
+                elif self.loss_name == 'cross_entropy_combined':
+                    loss = ce_loss
 
                 sum_accuracy += get_accuracy(logits, labels)
                 
@@ -190,17 +229,32 @@ class Trainer:
         sum_accuracy = 0.
         
         for (x_wavs, x_mels, labels) in valid_loader:
-            x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
-            logits, features = self.net(x_wavs, x_mels, labels, train=False)
-            sum_accuracy += get_accuracy(logits, labels)
+            if self.loss_name == 'cross_entropy_combined':
+                x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
+                type_labels = labels // 7  # Assuming 7 types per machine
+                type_labels[labels == 34] = 5
 
-            if self.loss_name == 'cross_entropy':
-                loss = self.criterion(logits, labels)
-            elif self.loss_name == 'cross_entropy_supcon':
-                features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
-                sc_loss = self.sc_criternion(features, labels)
-                loss = self.criterion(logits, labels) + sc_loss
-            sum_loss += loss.item()
+                id_logits, type_logits, features = self.net(x_wavs, x_mels, labels, type_labels)
+
+                id_loss = self.criterion(id_logits, labels)
+                type_loss = self.criterion(type_logits, type_labels)
+                loss = (1 - self.beta) * id_loss + self.beta * type_loss
+                logits = id_logits
+
+                sum_accuracy += get_accuracy(logits, labels)
+                sum_loss += loss.item()
+            else:
+                x_wavs, x_mels, labels = x_wavs.to(self.device), x_mels.to(self.device), labels.to(self.device)
+                logits, features = self.net(x_wavs, x_mels, labels, train=False)
+                sum_accuracy += get_accuracy(logits, labels)
+
+                if self.loss_name == 'cross_entropy':
+                    loss = self.criterion(logits, labels)
+                elif self.loss_name == 'cross_entropy_supcon':
+                    features = features.unsqueeze(1) # shape: [batch_size, 1, feature_dim]
+                    sc_loss = self.sc_criternion(features, labels)
+                    loss = self.criterion(logits, labels) + sc_loss
+                sum_loss += loss.item()
             
         avg_loss = sum_loss / num_steps 
         avg_accuracy = sum_accuracy / num_steps 
