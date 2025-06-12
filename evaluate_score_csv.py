@@ -4,11 +4,8 @@ from torch.utils.data import DataLoader
 from sklearn import metrics
 from losses import ASDLoss, SupConLoss
 from model.net import (
-    TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN,
-    TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN,
-    TAST_SpecNetMFN_archi2, TAST_SpecNetMFN_combined,
-    TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm_combined,
-    TASTgramMFN_nrm, TAST_SpecNetMFN_nrm2
+    TASTgramMFN, TAST_SpecNetMFN,
+    TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm2
 )
 from dataloader import eval_dataset
 import pandas as pd
@@ -19,16 +16,9 @@ import argparse
 # Mapping of model names to classes
 NET_FACTORY = {
     'TASTgramMFN': TASTgramMFN,
-    'TASTgramMFN_FPH': TASTgramMFN_FPH,
-    'SCLTFSTgramMFN': SCLTFSTgramMFN,
-    'TASTWgramMFN': TASTWgramMFN,
-    'TASTWgramMFN_FPH': TASTWgramMFN_FPH,
     'TAST_SpecNetMFN': TAST_SpecNetMFN,
-    'TAST_SpecNetMFN_archi2': TAST_SpecNetMFN_archi2,
-    'TAST_SpecNetMFN_combined': TAST_SpecNetMFN_combined,
     'TAST_SpecNetMFN_nrm': TAST_SpecNetMFN_nrm,
     'TAST_SpecNetMFN_nrm2': TAST_SpecNetMFN_nrm2,
-    'TASTgramMFN_nrm': TASTgramMFN_nrm,
 }
 
 

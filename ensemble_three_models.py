@@ -16,21 +16,13 @@ from losses import ASDLoss
 from dataloader import test_dataset
 # import your nets here
 from model.net import (
-    TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN,
-    TASTWgramMFN, TASTWgramMFN_FPH,
-    TAST_SpecNetMFN, TAST_SpecNetMFN_archi2, TAST_SpecNetMFN_combined,
+    TASTgramMFN, TAST_SpecNetMFN,
     TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm2
 )
 
 NET_FACTORY = {
     'TASTgramMFN': TASTgramMFN,
-    'TASTgramMFN_FPH': TASTgramMFN_FPH,
-    'SCLTFSTgramMFN': SCLTFSTgramMFN,
-    'TASTWgramMFN': TASTWgramMFN,
-    'TASTWgramMFN_FPH': TASTWgramMFN_FPH,
     'TAST_SpecNetMFN': TAST_SpecNetMFN,
-    'TAST_SpecNetMFN_archi2': TAST_SpecNetMFN_archi2,
-    'TAST_SpecNetMFN_combined': TAST_SpecNetMFN_combined,
     'TAST_SpecNetMFN_nrm': TAST_SpecNetMFN_nrm,
     'TAST_SpecNetMFN_nrm2': TAST_SpecNetMFN_nrm2,
 }

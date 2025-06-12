@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score, davies_bouldin_score, pairwise_distances
 from sklearn.preprocessing import StandardScaler
-from model.net import TASTgramMFN_FPH, TASTWgramMFN, TAST_SpecNetMFN_nrm2
+from model.net import TASTgramMFN, TAST_SpecNetMFN_nrm2
 from dataloader import test_dataset
 import yaml
 import os
