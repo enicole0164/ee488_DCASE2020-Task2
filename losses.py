@@ -6,13 +6,13 @@ from torch.nn import Parameter
 
 
 class ASDLoss(nn.Module):
-    def __init__(self, reduction=True):
+    def __init__(self, label_smoothing=0.0, reduction=True):
         super(ASDLoss, self).__init__()
         if reduction == True:
-            self.ce = nn.CrossEntropyLoss()
+            self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         
         else:
-            self.ce = nn.CrossEntropyLoss(reduction='none')
+            self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing, reduction='none')
 
     def forward(self, logits, labels):
         loss = self.ce(logits, labels)

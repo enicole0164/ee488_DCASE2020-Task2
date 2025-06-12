@@ -1,6 +1,6 @@
 import torch
 from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN, TAST_SpecNetMFN_archi2, TASTWgram_SpecNetMFN, \
-                        TAST_SpecNetMFN_combined, WaveNetMFN
+                        TAST_SpecNetMFN_combined, WaveNetMFN, TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm_combined, TASTgramMFN_nrm, TAST_SpecNetMFN_nrm2, TASTTF_SpecNetMFN_nrm
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -36,8 +36,18 @@ class Trainer:
             self.net = TASTWgram_SpecNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'TAST_SpecNetMFN_combined':
             self.net = TAST_SpecNetMFN_combined(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN_nrm':
+            self.net = TAST_SpecNetMFN_nrm(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN_nrm_combined':
+            self.net = TAST_SpecNetMFN_nrm_combined(num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'WaveNetMFN':
             self.net = WaveNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTgramMFN_nrm':
+            self.net = TASTgramMFN_nrm(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TAST_SpecNetMFN_nrm2':
+            self.net = TAST_SpecNetMFN_nrm2(num_classes=class_num, mode=mode, m=m).to(self.device)
+        elif net == 'TASTTF_SpecNetMFN_nrm':
+            self.net = TASTTF_SpecNetMFN_nrm(num_classes=class_num, mode=mode, m=m).to(self.device)
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TASTgramMFN_FPH]')
         print(f'{net} has been selected...')
@@ -45,8 +55,11 @@ class Trainer:
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=lr)
         
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=epochs, eta_min=0.1*float(lr))
-        self.criterion = ASDLoss().to(self.device)
-        self.test_criterion = ASDLoss(reduction=False).to(self.device)
+
+        smth = float(cfg.get('lbl_smth', 0.0))
+        self.criterion = ASDLoss(smth).to(self.device)
+        self.test_criterion = ASDLoss(smth, reduction=False).to(self.device)
+        
         self.mode = mode
         self.loss_name = loss_name
         if loss_name not in ['cross_entropy', 'cross_entropy_supcon', 'cross_entropy_combined']:

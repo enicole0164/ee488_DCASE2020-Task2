@@ -1,5 +1,5 @@
 import torch
-from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN, TAST_SpecNetMFN_nrm
+from model.net import TASTgramMFN, TASTgramMFN_FPH, SCLTFSTgramMFN, TASTWgramMFN, TASTWgramMFN_FPH, TAST_SpecNetMFN, TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm2
 from tqdm import tqdm
 from utils import get_accuracy, mixup_data, arcmix_criterion, noisy_arcmix_criterion
 from losses import ASDLoss, ArcMarginProduct, SupConLoss
@@ -32,7 +32,10 @@ class Trainer:
             self.net = TAST_SpecNetMFN(num_classes=class_num, mode=mode, m=m).to(self.device)
         elif net == 'TAST_SpecNetMFN_nrm':
             self.net = TAST_SpecNetMFN_nrm(num_classes=class_num, mode=mode, m=m).to(self.device)
-            self.alpha = 0.2
+            self.beta = 0.5
+        elif net == 'TAST_SpecNetMFN_nrm2':
+            self.net = TAST_SpecNetMFN_nrm2(num_classes=class_num, mode=mode, m=m).to(self.device)
+            self.beta = 0.5
         else:
             raise ValueError('Net should be one of [SCLTFSTgramMFN, TASTgramMFN, TAST_SpecNetMFN]')
         print(f'{net} has been selected...')
@@ -106,7 +109,7 @@ class Trainer:
                         lbls = torch.cat(gathered_labels, dim=0)
 
                     sc_loss = self.sc_criternion(ftrs, lbls)
-                    loss = (1 - self.alpha) * ce_loss + self.alpha * sc_loss
+                    loss = (1 - self.beta) * ce_loss + self.beta * sc_loss
 
                 sum_accuracy += get_accuracy(logits, labels)
                 
@@ -229,7 +232,7 @@ class Trainer:
                 
                 sc_loss = self.sc_criternion(ftrs, lbls)
 
-                loss = self.criterion(lgts, lbls) + sc_loss
+                loss = (1 - self.beta) * self.criterion(lgts, lbls) + self.beta * sc_loss
             sum_loss += loss.item()
             
         avg_loss = sum_loss / num_steps 
