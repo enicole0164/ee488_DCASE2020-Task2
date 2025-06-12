@@ -1,0 +1,24 @@
+alpha: 0.5
+batch_size: 64
+epoch: 300
+gpu_num: 6
+htn: 64
+lbl_smth: 0.0
+loss_name: cross_entropy_supcon
+lr: 0.0001
+m: 0.7
+mode: noisy_arcmix
+name_list:
+- fan
+- pump
+- slider
+- ToyCar
+- ToyConveyor
+- valve
+net_name: TAST_SpecNetMFN_nrm
+num_classes: 41
+root_path: /home/Dataset/DCASE2020_Task2_dataset/dev_data
+save_root: ./check_points
+seed: 2023
+split_ratio: 0.95
+temp_coeff: 0.02
