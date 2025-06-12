@@ -83,6 +83,66 @@ class test_dataset(torch.utils.data.Dataset):
             
         return label_list 
 
+class eval_dataset(torch.utils.data.Dataset):
+    def __init__(self, root_path, test_name, name_list):
+        dataset_dir = os.path.join(root_path, test_name+'_eval', 'test')
+        self.eval_files = sorted(glob.glob('{dir}/*.wav'.format(dir=dataset_dir)))
+        
+        target_idx = name_list.index(test_name)
+        
+        label_init_num = 0
+        for i, name in enumerate(name_list):
+            if i == target_idx:
+                break
+            label_init_num+=len(self._get_label_list(name))
+            
+        self.labels = []
+        label_list = self._get_label_list(test_name)
+        for file_name in self.eval_files:
+            for idx, label_idx in enumerate(label_list):
+                if label_idx in file_name:
+                    self.labels.append(idx + label_init_num)
+        
+        self.labels = torch.LongTensor(self.labels)
+        
+        
+        self.y_list = []
+        self.y_spec_list = []
+        
+        for i in tqdm(range(len(self.eval_files))):
+            y, sr = self._file_load(self.eval_files[i])
+            y_specgram = file_to_log_mel_spectrogram(y, sr, n_fft=2048, hop_length=512, n_mels=128, power=2)
+            self.y_list.append(y)
+            self.y_spec_list.append(y_specgram)
+    
+    def __getitem__(self, idx):
+        wav_path = self.eval_files[idx]
+        label = self.labels[idx]
+        return self.y_list[idx], self.y_spec_list[idx], label, wav_path.rsplit("/", 1)[-1]
+
+    def __len__(self):
+        return len(self.eval_files)
+    
+    def _file_load(self, file_name):
+        try:
+            y, sr = torchaudio.load(file_name)
+            y = y[..., :sr * 10]
+            return y, sr
+        except:
+            print("file_broken or not exists!! : {}".format(file_name))
+    
+    def _get_label_list(self, name):
+        if name == 'ToyConveyor':
+            label_list = ['id_01', 'id_02', 'id_03', 'id_04', 'id_05', 'id_06'] 
+    
+        elif name == 'ToyCar':
+            label_list = ['id_01', 'id_02', 'id_03', 'id_04', 'id_05', 'id_06', 'id_07']
+        
+        else:
+            label_list = ['id_00', 'id_01', 'id_02', 'id_03', 'id_04', 'id_05', 'id_06']
+            
+        return label_list 
+
 
 class train_dataset(torch.utils.data.Dataset):
     def __init__(self, root_path, name_list): 

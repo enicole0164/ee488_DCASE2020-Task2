@@ -33,6 +33,18 @@ class ConvPreWavBlock(nn.Module):
         x = F.max_pool1d(x, kernel_size=pool_size)
 
         return x
+    
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                # He init for ReLU
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                # BN weight=1, bias=0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
 
 class ConvPreWavBlockqo(nn.Module):
@@ -61,6 +73,17 @@ class ConvPreWavBlockqo(nn.Module):
         x = F.adaptive_max_pool1d(x, 626)
         return x
 
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                # He init for ReLU
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                # BN weight=1, bias=0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
 class ConvPreWavBlockqt(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -87,6 +110,18 @@ class ConvPreWavBlockqt(nn.Module):
         x = F.relu_(self.bn2(self.conv2(x)))
         x = F.adaptive_max_pool1d(x, 313)
         return x
+    
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                # He init for ReLU
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                # BN weight=1, bias=0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
 
 class TFgram(nn.Module):
@@ -99,7 +134,7 @@ class TFgram(nn.Module):
         self.pre_block2 = ConvPreWavBlockqo(64, 128)
         self.pre_block3 = ConvPreWavBlockqt(128, 128)
 
-    def forward(self, input, train):
+    def forward(self, input, train=True):
         """
         Input: (batch_size, data_length)"""
 

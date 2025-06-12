@@ -1,0 +1,26 @@
+# config.yaml
+gpu_num: 0
+num_classes: 41
+
+# instead of a flat list, make this a list of dicts:
+ensemble_models:
+  - net_name: TAST_SpecNetMFN_nrm2
+    mode: noisy_arcmix
+    loss_name: cross_entropy_supcon
+
+  - net_name: TAST_SpecNetMFN_nrm2
+    mode: noisy_arcmix
+    loss_name: cross_entropy
+
+  - net_name: TASTgramMFN
+    mode: noisy_arcmix
+    loss_name: cross_entropy
+
+# per‐machine weights stay the same:
+ensemble_alphas:
+  fan:          [0.00, 0.75, 0.25]
+  pump:         [0.30, 0.15, 0.55]
+  slider:       [0.50, 0.45, 0.05]
+  ToyCar:       [1.00, 0.00, 0.00]
+  ToyConveyor:  [0.45, 0.35, 0.20]
+  valve:        [0.00, 0.10, 0.90]

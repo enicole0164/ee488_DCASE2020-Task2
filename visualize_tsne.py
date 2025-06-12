@@ -20,7 +20,7 @@ from sklearn.metrics import silhouette_score, davies_bouldin_score, pairwise_dis
 @torch.no_grad()
 def extract_features(model, dataloader, device):
     model.eval()
-    features_before, features_after, labels_all, AN_N_labels_all = [], [], [], []
+    features_all, labels_all, AN_N_labels_all = [], [], []
 
     for x_wav, x_mel, label, AN_N_labels in dataloader:
         x_wav, x_mel, label = x_wav.to(device), x_mel.to(device), label.to(device)
@@ -29,20 +29,20 @@ def extract_features(model, dataloader, device):
         x_t = model.get_tgram(x_wav).unsqueeze(1)
         x_mel_att = model.temporal_attention(x_mel).unsqueeze(1)
         x_spec = model.get_specnet(x_wav).unsqueeze(1)
-        x = torch.cat((x_t, x_mel, x_mel_att), dim=1)
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)
 
         _, features = model.mobilefacenet(x)        # after mobilefacenet
 
-        features.append(features.cpu().numpy())
+        features_all.append(features.cpu().numpy())
         labels_all.append(label.cpu().numpy())
         AN_N_labels_all.append(AN_N_labels.cpu().numpy())
 
-    return np.concatenate(features_before), np.concatenate(features_after), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
+    return np.concatenate(features_all), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
 
 @torch.no_grad()
 def extract_features_nrm(model, dataloader, device):
     model.eval()
-    features_before, features_after, labels_all, AN_N_labels_all = [], [], [], []
+    features_all, labels_all, AN_N_labels_all = [], [], []
 
     for x_wav, x_mel, label, AN_N_labels in dataloader:
         x_wav, x_mel, label = x_wav.to(device), x_mel.to(device), label.to(device)
@@ -52,50 +52,19 @@ def extract_features_nrm(model, dataloader, device):
         x_t = F.normalize(x_t, dim=(2,3))
         x_mel_att = model.temporal_attention(x_mel).unsqueeze(1)
         x_mel_att = F.normalize(x_mel_att, dim=(2,3))
+        x_spec = model.get_specnet(x_wav).unsqueeze(1)
+        x_spec = F.normalize(x_spec, dim=(2,3))
         x_mel = F.normalize(x_mel, dim=(2,3))
-        x = torch.cat((x_t, x_mel, x_mel_att), dim=1)
+        x = torch.cat((x_t, x_mel, x_mel_att, x_spec), dim=1)
 
         _, features = model.mobilefacenet(x)
         features = F.normalize(features, dim=1)         # after mobilefacenet
 
-        features.append(features.cpu().numpy())
+        features_all.append(features.cpu().numpy())
         labels_all.append(label.cpu().numpy())
         AN_N_labels_all.append(AN_N_labels.cpu().numpy())
 
-    return np.concatenate(features_before), np.concatenate(features_after), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
-
-
-@torch.no_grad()
-def extract_features_wavenet(model, dataloader, device):
-    model.eval()
-    features_before, features_after = [], []
-    labels_all, AN_N_labels_all = [], []
-
-    for x_wav, x_mel, label, AN_N_labels in dataloader:
-        x_wav, x_mel, label = x_wav.to(device), x_mel.to(device), label.to(device)
-
-        # Before WaveNet: concat(Tgram + mel + TA)
-        x_t = model.get_tgram(x_wav).unsqueeze(1)             
-        x_mel_att = model.temporal_attention(x_mel).unsqueeze(1) 
-        x_before = torch.cat((x_t, x_mel, x_mel_att), dim=1)  
-
-        # After WaveNet
-        x_w = model.wavenet(x_wav)[0].unsqueeze(1)            
-        x_after = torch.cat((x_t, x_mel, x_mel_att, x_w), dim=1)
-
-        # Features
-        _, feat_before = model.mobilefacenet(x_before)
-        _, feat_after = model.mobilefacenet(x_after)
-
-        features_before.append(feat_before.cpu().numpy())
-        features_after.append(feat_after.cpu().numpy())
-        labels_all.append(label.cpu().numpy())
-        AN_N_labels_all.append(AN_N_labels.cpu().numpy())
-
-    return (np.concatenate(features_before),
-            np.concatenate(features_after),
-            np.concatenate(labels_all),
-            np.concatenate(AN_N_labels_all))
+    return np.concatenate(features_all), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
 
 def run_tsne(features):
     print("Running TSNE on features of shape:", features.shape)
@@ -213,7 +182,7 @@ def main():
     model = TAST_SpecNetMFN_nrm2(num_classes=cfg['num_classes'],
                             mode=cfg['mode'],
                             m=cfg['m'],
-                            cfg=cfg).to(device)
+                            ).to(device)
     model.load_state_dict(torch.load(model_path))
     model.eval()
 
@@ -227,27 +196,26 @@ def main():
         dataloader = DataLoader(test_ds, batch_size=1, num_workers=4, shuffle=False)
 
         # Feature extraction
-        feat_before, feat_after, labels, AN_N_labels = extract_features(model, dataloader, device)
+        features, labels, AN_N_labels = extract_features_nrm(model, dataloader, device)
 
         # Create output dir
-        save_dir = f"./debugging_tsne/{name_list[i]}"
+        save_dir = f"./debugging_tsne/5/{name_list[i]}"
         os.makedirs(save_dir, exist_ok=True)
 
         # t-SNE for TAST_FPH
-        tsne_before = run_tsne(feat_before) #or run_tsne(feat_before_wavenet)
-        tsne_after = run_tsne(feat_after) #or run_tsne(feat_after_wavenet)
+        tsne = run_tsne(features) #or run_tsne(feat_before_wavenet)
 
         # plot and save
         #plot_tsne(tsne_before, labels, f"{name_list[i]} - t-SNE Before FPH", f"{save_dir}/tsne_before.png")
         #plot_tsne(tsne_after, labels, f"{name_list[i]} - t-SNE After FPH", f"{save_dir}/tsne_after.png")
 
         # plot and save
-        plot_tsne_anomaly(tsne_before, labels, AN_N_labels, f"{name_list[i]} - t-SNE Before FPH", f"{save_dir}/tsne_before_anomaly.png")
-        plot_tsne_anomaly(tsne_after, labels, AN_N_labels, f"{name_list[i]} - t-SNE After FPH", f"{save_dir}/tsne_after_anomaly.png")
+        plot_tsne_anomaly(tsne, labels, AN_N_labels, f"{name_list[i]} - t-SNE", f"{save_dir}/tsne.png")
 
         # Save clustering metrics
         #evaluate_clustering(feat_before, labels, name="Before FPH", save_path=f"{save_dir}/clustering_performance.txt")
         #evaluate_clustering(feat_after, labels, name="After FPH", save_path=f"{save_dir}/clustering_performance.txt")
 
 if __name__ == "__main__":
+    torch.set_num_threads(2)
     main()
