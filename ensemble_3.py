@@ -22,7 +22,6 @@ from model.net import (
     TAST_SpecNetMFN_nrm, TAST_SpecNetMFN_nrm2
 )
 
-
 NET_FACTORY = {
     'TASTgramMFN': TASTgramMFN,
     'TASTgramMFN_FPH': TASTgramMFN_FPH,
@@ -36,18 +35,17 @@ NET_FACTORY = {
     'TAST_SpecNetMFN_nrm2': TAST_SpecNetMFN_nrm2,
 }
 
-
 def parse_args():
-    p = argparse.ArgumentParser(description="Ensemble two or more DCASE models")
-    p.add_argument('--models', nargs=2, required=True,
-                   help="Two model specs: net_name:mode:loss (e.g. TAST_SpecNetMFN:noisy_arcmix:cross_entropy)")
+    p = argparse.ArgumentParser(description="Ensemble three DCASE models with per-ID AUC optimization")
+    p.add_argument('--models', nargs=3, required=True,
+                   help="List of three model specs: net_name:mode:loss (e.g. TAST_SpecNetMFN:noisy_arcmix:cross_entropy)")
     p.add_argument('--device', type=str, default='cuda:0',
                    help="Torch device")
     p.add_argument('--batch-size', type=int, default=1,
                    help="Batch size for DataLoader")
     p.add_argument('--alpha-step', type=float, default=0.05,
                    help="Step size for alpha grid search [0,1]")
-    p.add_argument('--output-dir', type=str, default='ensemble_out',
+    p.add_argument('--output-dir', type=str, default='ensemble3_out',
                    help="Directory to save plots, CSVs, logs")
     return p.parse_args()
 
@@ -55,7 +53,7 @@ def parse_args():
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
     logging.basicConfig(
-        filename=os.path.join(output_dir, 'ensemble.log'),
+        filename=os.path.join(output_dir, 'ensemble3.log'),
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(message)s'
     )
@@ -77,23 +75,20 @@ def load_cfg_and_model(spec, device):
 
 
 def evaluate_model(net_name, net, loader, criterion, device):
-    """Returns numpy arrays: ids, y_true, y_scores"""
+    """Returns ids, y_true, y_scores as numpy arrays"""
     all_ids = []
     all_true = []
     all_scores = []
     with torch.no_grad():
         for x_w, x_m, labels, an_labels in tqdm(loader, desc=f"Eval {net_name}", leave=False):
             x_w, x_m = x_w.to(device), x_m.to(device)
-            # capture machine ID per sample
             ids_np = labels.cpu().numpy()
-            # forward pass
             if net_name.endswith('combined'):
                 type_labels = labels // 7
                 type_labels[labels == 34] = 5
                 logits, _, _ = net(x_w, x_m, labels.to(device), type_labels.to(device), train=False)
             else:
-                logits, _ = net(x_w.to(device), x_m.to(device), labels.to(device), train=False)
-            # anomaly scores
+                logits, _ = net(x_w, x_m, labels.to(device), train=False)
             scores = criterion(logits, labels.to(device)).cpu().numpy()
             all_ids.append(ids_np)
             all_true.append(an_labels.cpu().numpy())
@@ -133,71 +128,62 @@ def main():
     device = torch.device(args.device)
     logging.info(f"Using device: {device}")
 
-    # machine types
     name_list = ['fan', 'pump', 'slider', 'ToyCar', 'ToyConveyor', 'valve']
     data_root = "/home/Dataset/DCASE2020_Task2_dataset/dev_data"
-
     criterion = ASDLoss(reduction=False).to(device)
 
-    m1, net1, _ = load_cfg_and_model(args.models[0], device)
-    m2, net2, _ = load_cfg_and_model(args.models[1], device)
-
+    models = [load_cfg_and_model(spec, device) for spec in args.models]
     results = {}
 
     for machine in name_list:
         ds = test_dataset(data_root, machine, name_list)
         loader = DataLoader(ds, batch_size=args.batch_size)
 
-        ids1, y_true1, y_scores1 = evaluate_model(m1, net1, loader, criterion, device)
-        ids2, y_true2, y_scores2 = evaluate_model(m2, net2, loader, criterion, device)
+        ids_list, true_list, scores_list = None, None, []
+        for net_name, net, _ in models:
+            ids, y_true, y_s = evaluate_model(net_name, net, loader, criterion, device)
+            if true_list is None:
+                ids_list, true_list = ids, y_true
+            y_s = MinMaxScaler().fit_transform(y_s.reshape(-1, 1)).ravel()
+            scores_list.append(y_s)
+        assert np.array_equal(ids_list, ids_list)
+        ids, y_true = ids_list, true_list
 
-        # ensure same order
-        assert np.array_equal(ids1, ids2) and np.array_equal(y_true1, y_true2), \
-               f"Mismatched IDs/labels for {machine}"
-        ids = ids1
-        y_true = y_true1
+        # grid search on (a1,a2) with a3 = 1-a1-a2
+        best = {'a1':0,'a2':0,'a3':0,'avgID_AUC':0,'avgID_pAUC':0}
+        alphas = np.arange(0, 1+args.alpha_step/2, args.alpha_step)
+        for a1 in alphas:
+            for a2 in alphas:
+                a3 = 1 - a1 - a2
+                if a3 < 0: continue
+                ens = a1*scores_list[0] + a2*scores_list[1] + a3*scores_list[2]
+                avg_auc, avg_pauc = compute_avg_id_auc(ids, y_true, ens)
+                if avg_auc > best['avgID_AUC']:
+                    best.update({'a1':a1,'a2':a2,'a3':a3,'avgID_AUC':avg_auc,'avgID_pAUC':avg_pauc})
 
-        # normalize second model's scores
-        y_scores2 = MinMaxScaler().fit_transform(y_scores2.reshape(-1, 1)).ravel()
-
-        # grid search over alpha by avg per-ID AUC
-        best_a, best_avg_auc, best_avg_pauc = 0, 0, 0
-        for a in np.arange(0, 1 + args.alpha_step/2, args.alpha_step):
-            ens = a * y_scores1 + (1 - a) * y_scores2
-            avg_auc, avg_pauc = compute_avg_id_auc(ids, y_true, ens)
-            if avg_auc > best_avg_auc:
-                best_a, best_avg_auc, best_avg_pauc = a, avg_auc, avg_pauc
-
-        # final ensemble scores
-        ens_scores = best_a * y_scores1 + (1 - best_a) * y_scores2
+        ens_scores = best['a1']*scores_list[0] + best['a2']*scores_list[1] + best['a3']*scores_list[2]
         mac_auc, mac_pauc = compute_avg_id_auc(ids, y_true, ens_scores)
+        results[machine] = {**best, 'machine_AUC':mac_auc,'machine_pAUC':mac_pauc}
 
-        results[machine] = {
-            'alpha': best_a,
-            'machine_AUC': mac_auc,
-            'machine_pAUC': mac_pauc,
-            'avgID_AUC': best_avg_auc,
-            'avgID_pAUC': best_avg_pauc
-        }
-
-    # summary
-    header = f"{'Machine':<12}  α    AUC    pAUC   avgID_AUC  avgID_pAUC"
+    header = f"{'Machine':<12}  α1/α2/α3    AUC     pAUC   avgID_AUC  avgID_pAUC"
     print(header)
     logging.info("Finished per-machine ensembling:")
 
-    all_mac_auc, all_mac_pauc, all_avg_auc, all_avg_pauc = [], [], [], []
+    sums = {'mac_auc':[],'mac_pauc':[],'avg_auc':[],'avg_pauc':[]}
     for m, info in results.items():
-        print(f"{m:<12}  {info['alpha']:.2f}  {info['machine_AUC']:.4f}  {info['machine_pAUC']:.4f}  {info['avgID_AUC']:.4f}  {info['avgID_pAUC']:.4f}")
-        all_mac_auc.append(info['machine_AUC'])
-        all_mac_pauc.append(info['machine_pAUC'])
-        all_avg_auc.append(info['avgID_AUC'])
-        all_avg_pauc.append(info['avgID_pAUC'])
+        print(f"{m:<12}  {info['a1']:.2f}/{info['a2']:.2f}/{info['a3']:.2f}  "
+              f"{info['machine_AUC']:.4f}  {info['machine_pAUC']:.4f}  "
+              f"{info['avgID_AUC']:.4f}    {info['avgID_pAUC']:.4f}")
+        sums['mac_auc'].append(info['machine_AUC'])
+        sums['mac_pauc'].append(info['machine_pAUC'])
+        sums['avg_auc'].append(info['avgID_AUC'])
+        sums['avg_pauc'].append(info['avgID_pAUC'])
         logging.info(f"{m}: {info}")
 
-    print(f"\nOverall machine AUC:  {np.mean(all_mac_auc):.4f}")
-    print(f"Overall machine pAUC: {np.mean(all_mac_pauc):.4f}")
-    print(f"Overall avgID AUC:    {np.mean(all_avg_auc):.4f}")
-    print(f"Overall avgID pAUC:  {np.mean(all_avg_pauc):.4f}")
+    print(f"Overall machine AUC:  {np.mean(sums['mac_auc']):.4f}")
+    print(f"Overall machine pAUC: {np.mean(sums['mac_pauc']):.4f}")
+    print(f"Overall avgID AUC:    {np.mean(sums['avg_auc']):.4f}")
+    print(f"Overall avgID pAUC:   {np.mean(sums['avg_pauc']):.4f}")
 
 if __name__ == '__main__':
     torch.set_num_threads(2)

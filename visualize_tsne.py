@@ -5,13 +5,14 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score, davies_bouldin_score, pairwise_distances
 from sklearn.preprocessing import StandardScaler
-from model.net import TASTgramMFN_FPH, TASTWgramMFN
+from model.net import TASTgramMFN_FPH, TASTWgramMFN, TAST_SpecNetMFN_nrm2
 from dataloader import test_dataset
 import yaml
 import os
 import matplotlib
 import matplotlib.cm as cm
 from matplotlib.colors import to_rgb
+import torch.nn.functional as F
 matplotlib.use('Agg')
 
 from sklearn.metrics import silhouette_score, davies_bouldin_score, pairwise_distances
@@ -27,17 +28,42 @@ def extract_features(model, dataloader, device):
         # feature extraction
         x_t = model.get_tgram(x_wav).unsqueeze(1)
         x_mel_att = model.temporal_attention(x_mel).unsqueeze(1)
+        x_spec = model.get_specnet(x_wav).unsqueeze(1)
         x = torch.cat((x_t, x_mel, x_mel_att), dim=1)
 
-        _, feat_before = model.mobilefacenet(x)         # before FPH
-        feat_after = model.head(feat_before)            # after FPH
+        _, features = model.mobilefacenet(x)        # after mobilefacenet
 
-        features_before.append(feat_before.cpu().numpy())
-        features_after.append(feat_after.cpu().numpy())
+        features.append(features.cpu().numpy())
         labels_all.append(label.cpu().numpy())
         AN_N_labels_all.append(AN_N_labels.cpu().numpy())
 
     return np.concatenate(features_before), np.concatenate(features_after), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
+
+@torch.no_grad()
+def extract_features_nrm(model, dataloader, device):
+    model.eval()
+    features_before, features_after, labels_all, AN_N_labels_all = [], [], [], []
+
+    for x_wav, x_mel, label, AN_N_labels in dataloader:
+        x_wav, x_mel, label = x_wav.to(device), x_mel.to(device), label.to(device)
+
+        # feature extraction
+        x_t = model.get_tgram(x_wav).unsqueeze(1)
+        x_t = F.normalize(x_t, dim=(2,3))
+        x_mel_att = model.temporal_attention(x_mel).unsqueeze(1)
+        x_mel_att = F.normalize(x_mel_att, dim=(2,3))
+        x_mel = F.normalize(x_mel, dim=(2,3))
+        x = torch.cat((x_t, x_mel, x_mel_att), dim=1)
+
+        _, features = model.mobilefacenet(x)
+        features = F.normalize(features, dim=1)         # after mobilefacenet
+
+        features.append(features.cpu().numpy())
+        labels_all.append(label.cpu().numpy())
+        AN_N_labels_all.append(AN_N_labels.cpu().numpy())
+
+    return np.concatenate(features_before), np.concatenate(features_after), np.concatenate(labels_all), np.concatenate(AN_N_labels_all)
+
 
 @torch.no_grad()
 def extract_features_wavenet(model, dataloader, device):
@@ -176,15 +202,15 @@ def evaluate_clustering(X, labels, name="", save_path=None):
 
 def main():
     # load config & checkpoint Fill in yours
-    config_path = './check_points/TASTgramMFN_FPH/noisy_arcmix/cross_entropy_supcon_300_0.02/config.yaml'
-    model_path = './check_points/TASTgramMFN_FPH/noisy_arcmix/cross_entropy_supcon_300_0.02/model.pth'
+    config_path = './check_points/TAST_SpecNetMFN_nrm2/noisy_arcmix/cross_entropy_supcon/config.yaml'
+    model_path = './check_points/TAST_SpecNetMFN_nrm2/noisy_arcmix/cross_entropy_supcon/model.pth'
 
     with open(config_path, 'r') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
 
     device = torch.device(f"cuda:{cfg['gpu_num']}" if torch.cuda.is_available() else "cpu")
     
-    model = TASTgramMFN_FPH(num_classes=cfg['num_classes'],
+    model = TAST_SpecNetMFN_nrm2(num_classes=cfg['num_classes'],
                             mode=cfg['mode'],
                             m=cfg['m'],
                             cfg=cfg).to(device)
@@ -193,7 +219,7 @@ def main():
 
     # load dataset
     root_path = "/home/Dataset/DCASE2020_Task2_dataset/dev_data"
-    name_list = ['fan', 'ToyConveyor']
+    name_list = ['fan', 'ToyConveyor', 'ToyCar']
 
     for i in range(len(name_list)):
         print(f"\nProcessing machine type: {name_list[i]}")
