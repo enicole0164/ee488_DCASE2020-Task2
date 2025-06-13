@@ -99,7 +99,10 @@ python eval.py
  | ToyConveyor  | 97.05  |
  | __Average__      | __95.42__  |
 
-# Setup for DDP on Specifying GPU want to use
+## Presentation Slide
+[Presentation file(.pptx)](https://docs.google.com/presentation/d/1roH0ECj7T9-Ml1HJ3mTAvsuOuH01nUuz/edit?usp=sharing&ouid=110900903760424483652&rtpof=true&sd=true)
+
+## Setup for DDP on Specifying GPU want to use
 ```
 CUDA_VISIBLE_DEVICES=6,7 torchrun --standalone --nnodes=1 --nproc_per_node=2 train_ddp.py
 ```
